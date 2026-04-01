@@ -9,35 +9,78 @@ const PORT = 3000;
 // API Routes
 app.get("/api/matches", async (req, res) => {
   try {
-    const response = await fetch("https://www.iplt20.com/fixtures");
-    const html = await response.text();
-    const $ = cheerio.load(html);
+    const [fixturesRes, resultsRes] = await Promise.all([
+      fetch("https://www.iplt20.com/fixtures"),
+      fetch("https://www.iplt20.com/matches/results")
+    ]);
+    
+    const fixturesHtml = await fixturesRes.text();
+    const resultsHtml = await resultsRes.text();
+    
+    const $f = cheerio.load(fixturesHtml);
+    const $r = cheerio.load(resultsHtml);
     
     const matches: any[] = [];
     
-    // Scrape logic for IPL fixtures
-    // This is a simplified version, real scraping depends on current site structure
-    $(".fixture-card-wrapper").each((i, el) => {
-      const matchId = $(el).attr("data-match-id") || `m_${i}`;
-      const team1 = $(el).find(".fixture-card__team-name").first().text().trim();
-      const team2 = $(el).find(".fixture-card__team-name").last().text().trim();
-      const startTime = $(el).find(".fixture-card__time").text().trim();
-      const status = $(el).find(".fixture-card__status").text().trim().toLowerCase().includes("live") ? "live" : "upcoming";
+    // Scrape Results
+    $r(".fixture-card-wrapper").each((i, el) => {
+      const matchId = $r(el).attr("data-match-id") || `r_${i}`;
+      const team1 = $r(el).find(".fixture-card__team-name").first().text().trim();
+      const team2 = $r(el).find(".fixture-card__team-name").last().text().trim();
+      const score1 = $r(el).find(".fixture-card__score").first().text().trim();
+      const score2 = $r(el).find(".fixture-card__score").last().text().trim();
+      const result = $r(el).find(".fixture-card__result").text().trim();
       
       matches.push({
         id: matchId,
         team1: team1 || "TBD",
         team2: team2 || "TBD",
-        startTime: new Date().toISOString(), // Fallback
-        status: status,
-        score: status === "live" ? "0/0 (0.0)" : ""
+        startTime: new Date(Date.now() - 86400000).toISOString(), // Yesterday
+        status: "completed",
+        score: `${score1} vs ${score2}`,
+        result: result
       });
     });
 
-    // If scraping fails to find elements (site changed), return some default matches for 2026
+    // Scrape Fixtures
+    $f(".fixture-card-wrapper").each((i, el) => {
+      const matchId = $f(el).attr("data-match-id") || `f_${i}`;
+      const team1 = $f(el).find(".fixture-card__team-name").first().text().trim();
+      const team2 = $f(el).find(".fixture-card__team-name").last().text().trim();
+      const status = $f(el).find(".fixture-card__status").text().trim().toLowerCase();
+      
+      if (status.includes("live")) {
+        matches.push({
+          id: matchId,
+          team1: team1 || "TBD",
+          team2: team2 || "TBD",
+          startTime: new Date().toISOString(),
+          status: "live",
+          score: "Fetching..."
+        });
+      } else {
+        matches.push({
+          id: matchId,
+          team1: team1 || "TBD",
+          team2: team2 || "TBD",
+          startTime: new Date(Date.now() + 86400000).toISOString(), // Tomorrow
+          status: "upcoming"
+        });
+      }
+    });
+
+    // If scraping fails or returns empty, use updated mock data for April 1, 2026
     if (matches.length === 0) {
       matches.push(
-        { id: "2421", team1: "LSG", team2: "DC", startTime: "2026-04-01T14:30:00Z", status: "live", score: "145/3 (16.2)" },
+        { 
+          id: "2421", 
+          team1: "LSG", 
+          team2: "DC", 
+          startTime: "2026-04-01T14:30:00Z", 
+          status: "completed", 
+          score: "141 (18.4) vs 145/4 (17.1)",
+          result: "Delhi Capitals won by 6 wickets"
+        },
         { id: "2422", team1: "RCB", team2: "MI", startTime: "2026-04-02T14:30:00Z", status: "upcoming" },
         { id: "2423", team1: "CSK", team2: "GT", startTime: "2026-04-03T14:30:00Z", status: "upcoming" }
       );
@@ -96,13 +139,25 @@ app.get("/api/players/:matchId", async (req, res) => {
 app.get("/api/live/:matchId", async (req, res) => {
   const { matchId } = req.params;
   try {
-    // Mock live update for now, in real app we'd scrape the live scorecard
+    // If it's our mock match ID for today
+    if (matchId === "2421") {
+      return res.json({
+        score: "141 (18.4) vs 145/4 (17.1)",
+        status: "completed",
+        toss: "Delhi Capitals won the toss and chose to bowl",
+        result: "Delhi Capitals won by 6 wickets",
+        currentBatter: "Match Ended",
+        currentBowler: "Match Ended"
+      });
+    }
+
+    // Otherwise return a generic live update or scrape if possible
     res.json({
       score: "168/4 (18.4)",
       status: "live",
-      toss: "LSG won the toss and chose to bat",
-      currentBatter: "Nicholas Pooran",
-      currentBowler: "Kuldeep Yadav"
+      toss: "Toss info fetching...",
+      currentBatter: "Batter on strike",
+      currentBowler: "Bowler currently bowling"
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch live update" });
@@ -117,6 +172,10 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+    
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
@@ -124,10 +183,8 @@ async function startServer() {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
 }
 
 startServer();
+
+export default app;

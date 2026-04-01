@@ -18,6 +18,7 @@ export interface Match {
   toss?: string;
   currentBatter?: string;
   currentBowler?: string;
+  result?: string;
   winners?: {
     first: string; // userId
     second: string; // userId

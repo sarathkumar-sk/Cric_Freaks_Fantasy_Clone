@@ -493,25 +493,43 @@ export default function App() {
             >
               <div className="bg-black text-white p-6 sm:p-10 border-2 border-black flex flex-col items-center gap-6 text-center">
                 <div className="flex items-center gap-3">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-[10px] font-mono uppercase tracking-[0.2em]">Live_Match_Center</span>
-                  <button 
-                    onClick={async () => {
-                      if (selectedMatch) {
-                        const update = await getLiveUpdate(selectedMatch);
-                        setSelectedMatch({ ...selectedMatch, ...update });
-                      }
-                    }}
-                    className="ml-2 text-[8px] font-mono underline opacity-50 hover:opacity-100"
-                  >
-                    REFRESH_SCORE
-                  </button>
+                  {selectedMatch.status === 'live' ? (
+                    <>
+                      <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                      <span className="text-[10px] font-mono uppercase tracking-[0.2em]">Live_Match_Center</span>
+                    </>
+                  ) : selectedMatch.status === 'completed' ? (
+                    <>
+                      <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                      <span className="text-[10px] font-mono uppercase tracking-[0.2em]">Match_Result</span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                      <span className="text-[10px] font-mono uppercase tracking-[0.2em]">Match_Preview</span>
+                    </>
+                  )}
+                  {selectedMatch.status === 'live' && (
+                    <button 
+                      onClick={async () => {
+                        if (selectedMatch) {
+                          const update = await getLiveUpdate(selectedMatch);
+                          setSelectedMatch({ ...selectedMatch, ...update });
+                        }
+                      }}
+                      className="ml-2 text-[8px] font-mono underline opacity-50 hover:opacity-100"
+                    >
+                      REFRESH_SCORE
+                    </button>
+                  )}
                 </div>
                 <div className="flex flex-col sm:flex-row items-center gap-6 sm:gap-16">
                   <span className="text-4xl sm:text-6xl font-black italic">{selectedMatch.team1}</span>
                   <div className="flex flex-col items-center">
                     <span className="text-3xl sm:text-5xl font-black text-[#F27D26]">{selectedMatch.score || '0/0 (0.0)'}</span>
-                    <span className="text-[10px] font-mono opacity-50 mt-2 uppercase tracking-widest">{selectedMatch.toss || 'TOSS_PENDING'}</span>
+                    <span className="text-[10px] font-mono opacity-50 mt-2 uppercase tracking-widest">
+                      {selectedMatch.status === 'completed' ? selectedMatch.result : (selectedMatch.toss || 'TOSS_PENDING')}
+                    </span>
                   </div>
                   <span className="text-4xl sm:text-6xl font-black italic">{selectedMatch.team2}</span>
                 </div>
@@ -525,6 +543,12 @@ export default function App() {
                       <span className="block text-[8px] font-mono opacity-50 uppercase mb-1">Bowling</span>
                       <span className="text-sm font-bold uppercase italic">{selectedMatch.currentBowler || 'N/A'}</span>
                     </div>
+                  </div>
+                )}
+                {selectedMatch.status === 'completed' && (
+                  <div className="w-full max-w-md border-t border-white/10 pt-6">
+                    <span className="block text-[10px] font-mono opacity-50 uppercase mb-2 tracking-widest">Final_Result</span>
+                    <span className="text-xl font-black italic uppercase text-[#F27D26]">{selectedMatch.result || 'Match Completed'}</span>
                   </div>
                 )}
                 {selectedMatch.status === 'upcoming' && (
