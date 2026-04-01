@@ -1,10 +1,10 @@
 {
-  "projectId": "cric-freak",
-  "appId": "1:283943330247:web:c19f0f075e399d242779e2",
-  "apiKey": "AIzaSyCuc6lglcx0WuwYhhfiMpYQYZ1hVFyvMWM",
+  "projectId": "gen-lang-client-0662388819",
+  "appId": "1:351430789692:web:0db7326451085258a05139",
+  "apiKey": "AIzaSyBd2GqRhpQ-UP0VumU-qezdSwdzUDkGhFQ",
   "authDomain": "gen-lang-client-0662388819.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-9770dcde-ee47-433f-af8c-6c10afa3fccf",
-  "storageBucket": "cric-freak.firebaseapp.com",
-  "messagingSenderId": "283943330247",
-  "measurementId": "G-6W30RBGD6N"
+  "storageBucket": "gen-lang-client-0662388819.firebasestorage.app",
+  "messagingSenderId": "351430789692",
+  "measurementId": ""
 }

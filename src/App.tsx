@@ -673,7 +673,7 @@ export default function App() {
 
       <footer className="mt-20 border-t-2 border-black p-8 text-center bg-white">
         <p className="text-[10px] font-mono opacity-50 uppercase tracking-[0.3em]">
-          CRIC_FREAKS_V2.0 // POWERED_BY_GEMINI_AI // FIREBASE_REALTIME
+          CRIC_FREAKS_V2.0 // FIREBASE_REALTIME
         </p>
       </footer>
     </div>
