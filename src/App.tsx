@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, collection, query, where, onSnapshot, setDoc, doc, getDoc } from './firebase';
 import { Match, Player, UserTeam, Contest } from './types';
-import { getIPLMatches, getIPLPlayers, getLiveUpdate } from './services/geminiService';
+import { getIPLMatches, getIPLPlayers, getLiveUpdate } from './services/cricketService';
 import { Trophy, Users, Clock, LogOut, LogIn, ChevronRight, Check, AlertCircle, Edit3, Award, LayoutGrid } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';

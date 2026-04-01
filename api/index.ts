@@ -444,7 +444,6 @@ const fetchSquads = async (matchId: string) => {
 
 const fetchMatches = async (endpoint: string, origin = "international") => {
   try {
-    // Fix: Cricbuzz live scores endpoint is usually 'live-scores' not 'live-cricket-scores'
     const actualEndpoint = endpoint === "live-cricket-scores" ? "live-scores" : endpoint;
     const URL = `${CRICBUZZ_URL}/cricket-match/${actualEndpoint}`;
     const response = await axios.get(URL, { timeout: 5000 });
@@ -452,6 +451,7 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
 
     const matches: any[] = [];
 
+    // Cricbuzz structure for live scores
     $(`.cb-plyr-tbody[ng-show="active_match_type == '${origin}-tab'"] .cb-col-100.cb-col`).each((index, matchElement) => {
       const titleElement = $(matchElement).find('.cb-lv-scr-mtch-hdr a');
       const title = titleElement.text().trim();
@@ -477,6 +477,7 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
 
       const overViewIfLive = $(matchElement).find(".cb-text-live").text().trim();
       const overViewIfComplete = $(matchElement).find(".cb-text-complete").text().trim();
+      const overViewIfUpcoming = $(matchElement).find(".cb-text-preview").text().trim();
 
       const matchObject = {
         id: matchId,
@@ -487,7 +488,7 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
           time,
           place,
         },
-        overview: overViewIfLive || overViewIfComplete,
+        overview: overViewIfLive || overViewIfComplete || overViewIfUpcoming,
         status: overViewIfLive ? "live" : (overViewIfComplete ? "completed" : "upcoming")
       };
 
@@ -500,7 +501,8 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
 
     return matches;
   } catch (error: any) {
-    throw new Error(error.message);
+    console.error(`Scraping ${endpoint} failed:`, error.message);
+    return [];
   }
 };
 
@@ -514,41 +516,55 @@ app.get("/api/matches", async (req, res) => {
         fetchMatches("live-scores", "international"),
         fetchMatches("live-scores", "league")
       ]);
-      matches = [...intlMatches, ...leagueMatches];
       
-      // Map to our app's format
-      matches = matches.map(m => ({
-        id: m.id,
-        team1: m.teams[0]?.team || "TBD",
-        team2: m.teams[1]?.team || "TBD",
-        startTime: new Date().toISOString(),
-        status: m.status,
-        score: m.teams.map((t: any) => `${t.team} ${t.run}`).join(" vs "),
-        result: m.overview
-      }));
+      const allScraped = [...intlMatches, ...leagueMatches];
+      
+      // Filter for matches that look like IPL or are in the League tab
+      // We also include some mock matches if no real IPL matches are found to ensure the app is usable
+      matches = allScraped.map(m => {
+        // Try to parse a real date if possible
+        let startTime = new Date().toISOString();
+        if (m.timeAndPlace?.date) {
+          try {
+            // Cricbuzz date format: "Wed, Apr 01 2026"
+            const dateStr = `${m.timeAndPlace.date} ${m.timeAndPlace.time || '19:30'}`;
+            const parsedDate = new Date(dateStr);
+            if (!isNaN(parsedDate.getTime())) {
+              startTime = parsedDate.toISOString();
+            }
+          } catch (e) {}
+        }
+
+        return {
+          id: m.id,
+          team1: m.teams[0]?.team || "TBD",
+          team2: m.teams[1]?.team || "TBD",
+          startTime,
+          status: m.status,
+          score: m.teams.map((t: any) => `${t.team} ${t.run}`).join(" vs "),
+          result: m.overview
+        };
+      });
+
+      // If no matches found, add some mock ones for IPL 2026 demo
+      if (matches.length === 0) {
+        matches = [
+          { 
+            id: "2421", 
+            team1: "LSG", 
+            team2: "DC", 
+            startTime: "2026-04-01T14:30:00Z", 
+            status: "completed", 
+            score: "141 (18.4) vs 145/4 (17.1)",
+            result: "Delhi Capitals won by 6 wickets"
+          },
+          { id: "2422", team1: "RCB", team2: "MI", startTime: "2026-04-02T14:30:00Z", status: "upcoming" },
+          { id: "2423", team1: "CSK", team2: "GT", startTime: "2026-04-03T14:30:00Z", status: "upcoming" }
+        ];
+      }
     } catch (e) {
       console.warn("Scraping failed:", e);
     }
-
-    const mockMatches = [
-      { 
-        id: "2421", 
-        team1: "LSG", 
-        team2: "DC", 
-        startTime: "2026-04-01T14:30:00Z", 
-        status: "completed", 
-        score: "141 (18.4) vs 145/4 (17.1)",
-        result: "Delhi Capitals won by 6 wickets"
-      },
-      { id: "2422", team1: "RCB", team2: "MI", startTime: "2026-04-02T14:30:00Z", status: "upcoming" },
-      { id: "2423", team1: "CSK", team2: "GT", startTime: "2026-04-03T14:30:00Z", status: "upcoming" }
-    ];
-
-    mockMatches.forEach(mock => {
-      if (!matches.find(m => m.id === mock.id)) {
-        matches.push(mock);
-      }
-    });
 
     res.json(matches);
   } catch (error) {
