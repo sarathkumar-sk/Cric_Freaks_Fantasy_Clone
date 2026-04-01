@@ -551,15 +551,25 @@ app.get("/api/matches", async (req, res) => {
         matches = [
           { 
             id: "2421", 
-            team1: "LSG", 
-            team2: "DC", 
-            startTime: "2026-04-01T14:30:00Z", 
+            team1: "CSK", 
+            team2: "RCB", 
+            startTime: "2026-03-22T14:30:00Z", 
             status: "completed", 
-            score: "141 (18.4) vs 145/4 (17.1)",
-            result: "Delhi Capitals won by 6 wickets"
+            score: "173/6 (20.0) vs 176/4 (18.4)",
+            result: "Chennai Super Kings won by 6 wickets"
           },
-          { id: "2422", team1: "RCB", team2: "MI", startTime: "2026-04-02T14:30:00Z", status: "upcoming" },
-          { id: "2423", team1: "CSK", team2: "GT", startTime: "2026-04-03T14:30:00Z", status: "upcoming" }
+          { 
+            id: "2422", 
+            team1: "MI", 
+            team2: "GT", 
+            startTime: "2026-04-01T14:30:00Z", 
+            status: "live",
+            score: "168/6 (20.0) vs 120/4 (15.2)",
+            result: "Gujarat Titans need 49 runs in 28 balls"
+          },
+          { id: "2423", team1: "LSG", team2: "RR", startTime: "2026-04-02T10:00:00Z", status: "upcoming" },
+          { id: "2424", team1: "DC", team2: "PBKS", startTime: "2026-04-02T14:30:00Z", status: "upcoming" },
+          { id: "2425", team1: "KKR", team2: "SRH", startTime: "2026-04-03T14:30:00Z", status: "upcoming" }
         ];
       }
     } catch (e) {
