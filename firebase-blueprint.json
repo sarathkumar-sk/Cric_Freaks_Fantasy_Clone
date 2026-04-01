@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" }
+      },
+      "required": ["uid", "displayName", "email"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "IPL Match details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "team1": { "type": "string" },
+        "team2": { "type": "string" },
+        "startTime": { "type": "string" },
+        "status": { "type": "string", "enum": ["upcoming", "live", "completed"] },
+        "score": { "type": "string" },
+        "toss": { "type": "string" },
+        "winners": {
+          "type": "object",
+          "properties": {
+            "first": { "type": "string" },
+            "second": { "type": "string" }
+          }
+        }
+      },
+      "required": ["id", "team1", "team2", "startTime", "status"]
+    },
+    "Team": {
+      "title": "Team",
+      "description": "User's fantasy team for a match",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "matchId": { "type": "string" },
+        "players": { "type": "array", "items": { "type": "string" } },
+        "captainId": { "type": "string" },
+        "viceCaptainId": { "type": "string" },
+        "totalPoints": { "type": "number" }
+      },
+      "required": ["userId", "matchId", "players", "captainId", "viceCaptainId"]
+    },
+    "Contest": {
+      "title": "Contest",
+      "description": "A contest for a match",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string" },
+        "name": { "type": "string" },
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "maxParticipants": { "type": "number" }
+      },
+      "required": ["matchId", "name", "participants", "maxParticipants"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "User", "description": "User profiles" },
+    "/matches/{matchId}": { "schema": "Match", "description": "IPL matches" },
+    "/teams/{teamId}": { "schema": "Team", "description": "User fantasy teams" },
+    "/contests/{contestId}": { "schema": "Contest", "description": "Contests/Rooms" }
+  }
+}
