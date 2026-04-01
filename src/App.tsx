@@ -19,6 +19,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'matches' | 'team-builder' | 'live' | 'leaderboard'>('matches');
   const [allWinners, setAllWinners] = useState<any[]>([]);
+  const [teamValidation, setTeamValidation] = useState({
+    wk: 0, bat: 0, bowl: 0, ar: 0, team1: 0, team2: 0
+  });
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -76,6 +79,20 @@ export default function App() {
       setAllWinners(winnersData);
     });
   };
+
+  useEffect(() => {
+    if (selectedMatch) {
+      const selectedPlayers = players.filter(p => myTeam.includes(p.id));
+      setTeamValidation({
+        wk: selectedPlayers.filter(p => p.role === 'WK').length,
+        bat: selectedPlayers.filter(p => p.role === 'BAT').length,
+        bowl: selectedPlayers.filter(p => p.role === 'BOWL').length,
+        ar: selectedPlayers.filter(p => p.role === 'AR').length,
+        team1: selectedPlayers.filter(p => p.team === selectedMatch.team1).length,
+        team2: selectedPlayers.filter(p => p.team === selectedMatch.team2).length,
+      });
+    }
+  }, [myTeam, players, selectedMatch]);
 
   const handleSelectMatch = async (match: Match) => {
     setLoading(true);
@@ -149,8 +166,41 @@ export default function App() {
   };
 
   const saveTeam = async () => {
-    if (myTeam.length !== 11 || !captainId || !viceCaptainId || !selectedMatch) return;
-    
+    if (!selectedMatch) return;
+
+    // Validate constraints
+    if (myTeam.length !== 11) {
+      setError("Select exactly 11 players.");
+      return;
+    }
+
+    if (teamValidation.wk < 1) {
+      setError("At least 1 Wicket Keeper (WK) required.");
+      return;
+    }
+    if (teamValidation.bat < 1) {
+      setError("At least 1 Batter (BAT) required.");
+      return;
+    }
+    if (teamValidation.bowl < 1) {
+      setError("At least 1 Bowler (BOWL) required.");
+      return;
+    }
+
+    if (teamValidation.team1 < 4) {
+      setError(`Select at least 4 players from ${selectedMatch.team1}.`);
+      return;
+    }
+    if (teamValidation.team2 < 4) {
+      setError(`Select at least 4 players from ${selectedMatch.team2}.`);
+      return;
+    }
+
+    if (!captainId || !viceCaptainId) {
+      setError("Select Captain and Vice-Captain.");
+      return;
+    }
+
     const teamId = `${user.uid}_${selectedMatch.id}`;
     await setDoc(doc(db, 'teams', teamId), {
       userId: user.uid,
@@ -361,7 +411,7 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                <div className="bg-black text-white p-4 flex gap-8 w-full sm:w-auto justify-center">
+                <div className="bg-black text-white p-4 flex flex-wrap gap-4 sm:gap-8 w-full sm:w-auto justify-center">
                   <div className="text-center">
                     <span className="block text-2xl font-black italic">{myTeam.length}/11</span>
                     <span className="text-[10px] font-mono opacity-50 uppercase">Players</span>
@@ -371,6 +421,34 @@ export default function App() {
                       {players.filter(p => myTeam.includes(p.id)).reduce((acc, p) => acc + p.credits, 0).toFixed(1)}/100
                     </span>
                     <span className="text-[10px] font-mono opacity-50 uppercase">Credits</span>
+                  </div>
+                  <div className="hidden md:flex gap-4 border-l border-white/20 pl-8">
+                    <div className="text-center">
+                      <span className={cn("block text-sm font-black italic", teamValidation.wk < 1 ? "text-red-400" : "text-green-400")}>{teamValidation.wk}</span>
+                      <span className="text-[8px] font-mono opacity-50 uppercase">WK</span>
+                    </div>
+                    <div className="text-center">
+                      <span className={cn("block text-sm font-black italic", teamValidation.bat < 1 ? "text-red-400" : "text-green-400")}>{teamValidation.bat}</span>
+                      <span className="text-[8px] font-mono opacity-50 uppercase">BAT</span>
+                    </div>
+                    <div className="text-center">
+                      <span className={cn("block text-sm font-black italic", teamValidation.bowl < 1 ? "text-red-400" : "text-green-400")}>{teamValidation.bowl}</span>
+                      <span className="text-[8px] font-mono opacity-50 uppercase">BOWL</span>
+                    </div>
+                    <div className="text-center">
+                      <span className="block text-sm font-black italic">{teamValidation.ar}</span>
+                      <span className="text-[8px] font-mono opacity-50 uppercase">AR</span>
+                    </div>
+                  </div>
+                  <div className="hidden md:flex gap-4 border-l border-white/20 pl-8">
+                    <div className="text-center">
+                      <span className={cn("block text-sm font-black italic", teamValidation.team1 < 4 ? "text-red-400" : "text-green-400")}>{teamValidation.team1}</span>
+                      <span className="text-[8px] font-mono opacity-50 uppercase">{selectedMatch.team1}</span>
+                    </div>
+                    <div className="text-center">
+                      <span className={cn("block text-sm font-black italic", teamValidation.team2 < 4 ? "text-red-400" : "text-green-400")}>{teamValidation.team2}</span>
+                      <span className="text-[8px] font-mono opacity-50 uppercase">{selectedMatch.team2}</span>
+                    </div>
                   </div>
                 </div>
               </div>
