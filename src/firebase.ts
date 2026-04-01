@@ -11,11 +11,20 @@ export const googleProvider = new GoogleAuthProvider();
 // Test connection
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    // Only test if authenticated
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          await getDocFromServer(doc(db, 'test', 'connection'));
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('the client is offline')) {
+            console.error("Please check your Firebase configuration.");
+          }
+        }
+      }
+    });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
+    // Ignore initial errors
   }
 }
 testConnection();

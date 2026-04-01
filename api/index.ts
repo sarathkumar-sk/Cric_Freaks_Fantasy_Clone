@@ -164,9 +164,9 @@ app.get("/api/live/:matchId", async (req, res) => {
   }
 });
 
-// Vite middleware
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+// Vite middleware for local development only
+if (process.env.NODE_ENV !== "production") {
+  async function startDevServer() {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -176,15 +176,8 @@ async function startServer() {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
+  startDevServer();
 }
-
-startServer();
 
 export default app;
