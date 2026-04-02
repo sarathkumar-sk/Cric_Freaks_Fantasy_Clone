@@ -19,6 +19,7 @@ export interface Match {
   currentBatter?: string;
   currentBowler?: string;
   result?: string;
+  playerPoints?: Record<string, number>;
   winners?: {
     first: string; // userId
     second: string; // userId

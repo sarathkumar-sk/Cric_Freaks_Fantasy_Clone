@@ -449,10 +449,170 @@ const TEAM_PLAYERS: Record<string, any[]> = {
 
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FANTASY POINT CALCULATION LOGIC (Dream11 Rules)
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PlayerStats {
+  runs: number;
+  ballsFaced: number;
+  fours: number;
+  sixes: number;
+  wickets: number;
+  lbwOrBowled: number;
+  maidens: number;
+  overs: number;
+  runsConceded: number;
+  catches: number;
+  stumpings: number;
+  runOutDirect: number;
+  runOutIndirect: number;
+  isOut: boolean;
+}
+
+const calculateFantasyPoints = (stats: PlayerStats) => {
+  let points = 0;
+
+  // 🏏 BATTING POINTS
+  if (stats.runs > 0 || stats.isOut) {
+    points += stats.runs * 1; // Run scored: +1
+    if (stats.fours) points += stats.fours * 1; // Boundary bonus (4s): +1
+    if (stats.sixes) points += stats.sixes * 2; // Six bonus (6s): +2
+    
+    if (stats.runs >= 100) points += 16; // Century: +16
+    else if (stats.runs >= 50) points += 8; // Half-century: +8
+    else if (stats.runs >= 30) points += 4; // 30 runs scored: +4
+    
+    if (stats.runs === 0 && stats.isOut) points -= 2; // Duck: -2
+  }
+
+  // 🎳 BOWLING POINTS
+  if (stats.wickets > 0) {
+    points += stats.wickets * 25; // Wicket (excl. run out): +25
+    if (stats.wickets >= 5) points += 16; // Bonus – 5 wickets: +16
+    else if (stats.wickets >= 4) points += 8; // Bonus – 4 wickets: +8
+    else if (stats.wickets >= 3) points += 4; // Bonus – 3 wickets: +4
+    
+    if (stats.lbwOrBowled) points += stats.lbwOrBowled * 8; // LBW / Bowled bonus: +8
+  }
+  if (stats.maidens) points += stats.maidens * 8; // Maiden over: +8
+
+  // 🧤 FIELDING POINTS
+  if (stats.catches) points += stats.catches * 8; // Catch: +8
+  if (stats.stumpings) points += stats.stumpings * 12; // Stumping: +12
+  if (stats.runOutDirect) points += stats.runOutDirect * 12; // Run out (direct hit): +12
+  if (stats.runOutIndirect) points += stats.runOutIndirect * 6; // Run out (thrower/catcher): +6
+  if (stats.catches >= 3) points += 4; // 3+ catches bonus: +4
+
+  // ⚡ ECONOMY RATE POINTS (min. 2 overs bowled)
+  if (stats.overs >= 2) {
+    const economy = stats.runsConceded / stats.overs;
+    if (economy < 5) points += 6;
+    else if (economy < 6) points += 4;
+    else if (economy <= 7) points += 2;
+    else if (economy >= 10 && economy <= 11) points -= 2;
+    else if (economy > 11 && economy <= 12) points -= 4;
+    else if (economy > 12) points -= 6;
+  }
+
+  // 🎯 STRIKE RATE POINTS (batting, min. 10 balls faced)
+  if (stats.ballsFaced >= 10) {
+    const strikeRate = (stats.runs / stats.ballsFaced) * 100;
+    if (strikeRate > 170) points += 6;
+    else if (strikeRate > 150) points += 4;
+    else if (strikeRate > 130) points += 2;
+    else if (strikeRate >= 60 && strikeRate <= 70) points -= 2;
+    else if (strikeRate > 50 && strikeRate < 60) points -= 4;
+    else if (strikeRate <= 50) points -= 6;
+  }
+
+  return points;
+};
+
+const fetchScorecard = async (matchId: string) => {
+  try {
+    const url = `${CRICBUZZ_URL}/live-cricket-scorecard/${matchId}`;
+    const response = await axios.get(url, { 
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    const html = response.data;
+    const $ = cheerio.load(html);
+    
+    const playerStats: Record<string, PlayerStats> = {};
+
+    const getPlayer = (name: string) => {
+      if (!playerStats[name]) {
+        playerStats[name] = {
+          runs: 0, ballsFaced: 0, fours: 0, sixes: 0, wickets: 0,
+          lbwOrBowled: 0, maidens: 0, overs: 0, runsConceded: 0,
+          catches: 0, stumpings: 0, runOutDirect: 0, runOutIndirect: 0,
+          isOut: false
+        };
+      }
+      return playerStats[name];
+    };
+
+    // Parse Batting & Fielding
+    $('.cb-col.cb-col-100.cb-scrd-itms').each((_, el) => {
+      const battingName = $(el).find('.cb-col-27 a').text().trim();
+      const bowlingName = $(el).find('.cb-col-40 a').text().trim();
+
+      if (battingName) {
+        const p = getPlayer(battingName);
+        const dismissal = $(el).find('.cb-col-33').text().trim().toLowerCase();
+        p.runs = parseInt($(el).find('.cb-col-8.text-bold').text().trim()) || 0;
+        p.ballsFaced = parseInt($(el).find('.cb-col-8').eq(1).text().trim()) || 0;
+        p.fours = parseInt($(el).find('.cb-col-8').eq(2).text().trim()) || 0;
+        p.sixes = parseInt($(el).find('.cb-col-8').eq(3).text().trim()) || 0;
+        p.isOut = dismissal !== "not out" && dismissal !== "";
+
+        // Extract fielding points from dismissal text
+        // Example: "c Kohli b Siraj", "st Dhoni b Jadeja", "run out (Jadeja)"
+        if (dismissal.includes("c ") && !dismissal.includes("c & b")) {
+          const fielderName = dismissal.split("c ")[1].split(" b ")[0].trim();
+          if (fielderName) getPlayer(fielderName).catches++;
+        } else if (dismissal.includes("c & b")) {
+          const bowlerName = dismissal.split("c & b ")[1] || battingName; // Fallback
+          // Bowler gets a catch too
+        } else if (dismissal.includes("st ")) {
+          const stumperName = dismissal.split("st ")[1].split(" b ")[0].trim();
+          if (stumperName) getPlayer(stumperName).stumpings++;
+        } else if (dismissal.includes("run out")) {
+          const fielderPart = dismissal.split("(")[1]?.split(")")[0] || "";
+          const fielders = fielderPart.split("/").map(f => f.trim());
+          if (fielders.length === 1 && fielders[0]) {
+            getPlayer(fielders[0]).runOutDirect++;
+          } else {
+            fielders.forEach(f => { if (f) getPlayer(f).runOutIndirect++; });
+          }
+        }
+      } else if (bowlingName) {
+        const p = getPlayer(bowlingName);
+        p.overs = parseFloat($(el).find('.cb-col-8').eq(0).text().trim()) || 0;
+        p.maidens = parseInt($(el).find('.cb-col-8').eq(1).text().trim()) || 0;
+        p.runsConceded = parseInt($(el).find('.cb-col-8').eq(2).text().trim()) || 0;
+        p.wickets = parseInt($(el).find('.cb-col-8.text-bold').text().trim()) || 0;
+      }
+    });
+
+    const playerPoints: Record<string, number> = {};
+    Object.entries(playerStats).forEach(([name, stats]) => {
+      playerPoints[name] = calculateFantasyPoints(stats);
+    });
+
+    return playerPoints;
+  } catch (e) {
+    console.error("Scorecard fetch failed:", e);
+    return {};
+  }
+};
 const fetchScore = async (matchId: string) => {
   try {
-    const URL = `${CRICBUZZ_URL}/live-cricket-scores/${matchId}`;
-    const response = await axios.get(URL, { 
+    const url = `${CRICBUZZ_URL}/live-cricket-scores/${matchId}`;
+    const response = await axios.get(url, { 
       timeout: 10000,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -1571,9 +1731,8 @@ app.get("/api/matches", async (req, res) => {
         console.warn("Cannot persist updates: Firestore not initialized.");
       }
 
-      allScraped.forEach(scraped => {
+      for (const scraped of allScraped) {
         // Find matching match in our database
-        // Match by teams if ID doesn't match (Cricbuzz IDs change)
         const matchInDb = currentMatches.find(m => 
           m.id === scraped.id || 
           (m.team1 === scraped.team1 && m.team2 === scraped.team2) ||
@@ -1586,6 +1745,19 @@ app.get("/api/matches", async (req, res) => {
           matchInDb.score = scraped.score;
           matchInDb.result = scraped.result;
           
+          // Update player points if match is live or completed
+          if (scraped.status !== "upcoming") {
+            const playerPoints = await fetchScorecard(matchInDb.id);
+            if (Object.keys(playerPoints).length > 0) {
+              matchInDb.playerPoints = playerPoints;
+              if (batch && dbAdmin) {
+                const docRef = dbAdmin.collection("matches").doc(matchInDb.id);
+                batch.update(docRef, { playerPoints });
+                hasUpdates = true;
+              }
+            }
+          }
+          
           // If match is completed, persist to Firestore
           if (scraped.status === "completed" && batch && dbAdmin) {
             const docRef = dbAdmin.collection("matches").doc(matchInDb.id);
@@ -1597,7 +1769,12 @@ app.get("/api/matches", async (req, res) => {
             hasUpdates = true;
           }
         }
-      });
+      }
+      
+      if (hasUpdates && batch) {
+        await batch.commit();
+        console.log("Persisted match updates to Firestore.");
+      }
 
       if (hasUpdates && batch) {
         await batch.commit();
@@ -1629,30 +1806,67 @@ app.get("/api/matches", async (req, res) => {
 app.get("/api/players/:matchId", async (req, res) => {
   const { matchId } = req.params;
   try {
-    // Try to fetch real squads from Cricbuzz
+    // 1. Try to fetch real squads from Cricbuzz
     const realPlayers = await fetchSquads(matchId);
+    
+    // 2. Fetch match from Firestore to get points
+    let matchInDb: any = null;
+    if (dbAdmin) {
+      try {
+        const matchDoc = await dbAdmin.collection("matches").doc(matchId).get();
+        if (matchDoc.exists) {
+          matchInDb = matchDoc.data();
+        }
+      } catch (e) {
+        console.error("Failed to fetch match for points:", e);
+      }
+    }
+
+    // 3. Determine base players list
+    let playersToReturn: any[] = [];
     if (realPlayers.length > 0) {
-      return res.json(realPlayers);
-    }
-
-    // Fallback to mock data for demo matches
-    const match = MOCK_MATCHES.find(m => m.id === matchId);
-    let team1 = "LSG";
-    let team2 = "DC";
-
-    if (match) {
-      team1 = match.team1;
-      team2 = match.team2;
+      playersToReturn = realPlayers;
     } else {
-      if (matchId === "2422") { team1 = "RCB"; team2 = "MI"; }
-      if (matchId === "2423") { team1 = "CSK"; team2 = "GT"; }
+      // Fallback to mock data for demo matches
+      const match = MOCK_MATCHES.find(m => m.id === matchId);
+      let team1 = "LSG";
+      let team2 = "DC";
+
+      if (match) {
+        team1 = match.team1;
+        team2 = match.team2;
+      } else {
+        if (matchId === "2422") { team1 = "RCB"; team2 = "MI"; }
+        if (matchId === "2423") { team1 = "CSK"; team2 = "GT"; }
+      }
+
+      const p1 = TEAM_PLAYERS[team1] || TEAM_PLAYERS["LSG"];
+      const p2 = TEAM_PLAYERS[team2] || TEAM_PLAYERS["DC"];
+      playersToReturn = [...p1, ...p2];
+    }
+    
+    // 4. Merge points if available
+    if (matchInDb && matchInDb.playerPoints) {
+      playersToReturn = playersToReturn.map(p => {
+        // Find player in playerPoints by name (since IDs might differ between scraping and mock)
+        // We try exact match first, then case-insensitive
+        let points = matchInDb.playerPoints[p.name];
+        if (points === undefined) {
+          const lowerName = p.name.toLowerCase();
+          const key = Object.keys(matchInDb.playerPoints).find(k => k.toLowerCase() === lowerName);
+          if (key) points = matchInDb.playerPoints[key];
+        }
+
+        return {
+          ...p,
+          points: points !== undefined ? points : (p.points || 0)
+        };
+      });
     }
 
-    const p1 = TEAM_PLAYERS[team1] || TEAM_PLAYERS["LSG"];
-    const p2 = TEAM_PLAYERS[team2] || TEAM_PLAYERS["DC"];
-
-    res.json([...p1, ...p2]);
+    res.json(playersToReturn);
   } catch (error) {
+    console.error("Error in /api/players/:matchId:", error);
     res.status(500).json({ error: "Failed to fetch players" });
   }
 });

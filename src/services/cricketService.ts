@@ -21,9 +21,9 @@ export async function getIPLMatches(): Promise<Match[]> {
   }
 }
 
-export async function getIPLPlayers(matchId: string, team1: string, team2: string): Promise<Player[]> {
-  const CACHE_KEY = `ipl_players_${matchId}_v2`;
-  const CACHE_DURATION = 48 * 60 * 60 * 1000; // 48 hours (squads are very stable)
+export async function getIPLPlayers(matchId: string, team1: string, team2: string, isLiveOrCompleted = false): Promise<Player[]> {
+  const CACHE_KEY = `ipl_players_${matchId}_v3`;
+  const CACHE_DURATION = isLiveOrCompleted ? 2 * 60 * 1000 : 48 * 60 * 60 * 1000; // 2 mins for live, 48 hours for upcoming
 
   try {
     const cached = localStorage.getItem(CACHE_KEY);
@@ -34,7 +34,21 @@ export async function getIPLPlayers(matchId: string, team1: string, team2: strin
       }
     }
 
-    // Try Gemini first
+    // Try backend API first as it now handles points merging
+    try {
+      const response = await fetch(`/api/players/${matchId}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data.length > 0) {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+          return data;
+        }
+      }
+    } catch (apiError) {
+      console.warn("API player fetch failed", apiError);
+    }
+
+    // Fallback to Gemini if API fails
     try {
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",

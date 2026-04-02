@@ -50,11 +50,31 @@ export default function App() {
     }
   }, [user]);
 
+  const calculateTeamPoints = (team: UserTeam, playersList: Player[]) => {
+    let total = 0;
+    if (!team.players || !playersList.length) return 0;
+    
+    team.players.forEach(pid => {
+      const p = playersList.find(pl => pl.id === pid);
+      if (p) {
+        let pPoints = p.points || 0;
+        if (pid === team.captainId) pPoints *= 2;
+        else if (pid === team.viceCaptainId) pPoints *= 1.5;
+        total += pPoints;
+      }
+    });
+    return total;
+  };
+
   useEffect(() => {
     if (view === 'live' && selectedMatch) {
       const q = query(collection(db, 'teams'), where('matchId', '==', selectedMatch.id));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const teams = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as UserTeam));
+        const teams = snapshot.docs.map(d => {
+          const data = d.data() as UserTeam;
+          const totalPoints = calculateTeamPoints(data, players);
+          return { ...data, id: d.id, totalPoints };
+        });
         setContestTeams(teams);
 
         // Fetch user profiles for these teams
@@ -69,7 +89,21 @@ export default function App() {
       });
       return () => unsubscribe();
     }
-  }, [view, selectedMatch]);
+  }, [view, selectedMatch, players]);
+
+  // Automatic refresh for live matches
+  useEffect(() => {
+    let interval: any;
+    if (selectedMatch && selectedMatch.status === 'live') {
+      interval = setInterval(async () => {
+        const update = await getLiveUpdate(selectedMatch);
+        setSelectedMatch(prev => prev ? { ...prev, ...update } : null);
+        const p = await getIPLPlayers(selectedMatch.id, selectedMatch.team1, selectedMatch.team2, true);
+        setPlayers(p);
+      }, 60000); // Every 60 seconds
+    }
+    return () => clearInterval(interval);
+  }, [selectedMatch?.id, selectedMatch?.status]);
 
   const fetchMatches = async () => {
     setLoading(true);
@@ -126,7 +160,8 @@ export default function App() {
     try {
       // Fetch players for the match
       setLoadingMessage('Fetching Player Rosters...');
-      const p = await getIPLPlayers(match.id, match.team1, match.team2);
+      const isLiveOrCompleted = match.status === 'live' || match.status === 'completed';
+      const p = await getIPLPlayers(match.id, match.team1, match.team2, isLiveOrCompleted);
       if (p.length === 0) {
         setError('Failed to fetch players. Please try again.');
         setLoading(false);
@@ -488,10 +523,11 @@ export default function App() {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-4">
                   <div className="bg-white border-2 border-black overflow-hidden">
-                    <div className="grid grid-cols-5 sm:grid-cols-6 p-3 border-b-2 border-black bg-black text-white text-[10px] font-mono uppercase tracking-widest">
+                    <div className="grid grid-cols-6 sm:grid-cols-7 p-3 border-b-2 border-black bg-black text-white text-[10px] font-mono uppercase tracking-widest">
                       <div className="col-span-2 sm:col-span-3">Player_Name</div>
                       <div className="text-center">Role</div>
                       <div className="text-center">Status</div>
+                      <div className="text-center">Points</div>
                       <div className="text-center">CR</div>
                     </div>
                     <div className="max-h-[500px] overflow-y-auto">
@@ -500,7 +536,7 @@ export default function App() {
                           key={player.id}
                           onClick={() => togglePlayer(player.id)}
                           className={cn(
-                            "grid grid-cols-5 sm:grid-cols-6 p-4 border-b border-black/10 cursor-pointer transition-colors hover:bg-[#F27D26]/5",
+                            "grid grid-cols-6 sm:grid-cols-7 p-4 border-b border-black/10 cursor-pointer transition-colors hover:bg-[#F27D26]/5",
                             myTeam.includes(player.id) && "bg-[#F27D26]/10 border-l-4 border-l-[#F27D26]",
                             selectedMatch.status !== 'upcoming' && "cursor-not-allowed opacity-80"
                           )}
@@ -525,6 +561,9 @@ export default function App() {
                               <div className={cn("w-2 h-2 rounded-full", getStatusColor(player.status))}></div>
                               <span className="text-[8px] font-mono uppercase opacity-50">{player.status || 'NA'}</span>
                             </div>
+                          </div>
+                          <div className="flex items-center justify-center font-mono font-bold text-xs text-[#F27D26]">
+                            {player.points || 0}
                           </div>
                           <div className="flex items-center justify-center font-mono font-bold text-xs">
                             {player.credits}
@@ -625,11 +664,13 @@ export default function App() {
                         if (selectedMatch) {
                           const update = await getLiveUpdate(selectedMatch);
                           setSelectedMatch({ ...selectedMatch, ...update });
+                          const p = await getIPLPlayers(selectedMatch.id, selectedMatch.team1, selectedMatch.team2, true);
+                          setPlayers(p);
                         }
                       }}
                       className="ml-2 text-[8px] font-mono underline opacity-50 hover:opacity-100"
                     >
-                      REFRESH_SCORE
+                      REFRESH_SCORE_&_POINTS
                     </button>
                   )}
                 </div>
