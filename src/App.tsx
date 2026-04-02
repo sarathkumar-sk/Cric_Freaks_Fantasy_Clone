@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, collection, query, where, onSnapshot, setDoc, doc, getDoc } from './firebase';
+import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, collection, query, where, onSnapshot, setDoc, doc, getDoc, arrayUnion } from './firebase';
 import { Match, Player, UserTeam, Contest } from './types';
 import { getIPLMatches, getIPLPlayers, getLiveUpdate } from './services/cricketService';
 import { Trophy, Users, Clock, LogOut, LogIn, ChevronRight, Check, AlertCircle, Edit3, Award, LayoutGrid } from 'lucide-react';
@@ -19,6 +19,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'matches' | 'team-builder' | 'live' | 'leaderboard'>('matches');
   const [allWinners, setAllWinners] = useState<any[]>([]);
+  const [contestTeams, setContestTeams] = useState<UserTeam[]>([]);
+  const [contestUsers, setContestUsers] = useState<Record<string, any>>({});
   const [teamValidation, setTeamValidation] = useState({
     wk: 0, bat: 0, bowl: 0, ar: 0, team1: 0, team2: 0
   });
@@ -47,6 +49,27 @@ export default function App() {
       fetchWinners();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (view === 'live' && selectedMatch) {
+      const q = query(collection(db, 'teams'), where('matchId', '==', selectedMatch.id));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const teams = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as UserTeam));
+        setContestTeams(teams);
+
+        // Fetch user profiles for these teams
+        teams.forEach(async (t) => {
+          if (!contestUsers[t.userId]) {
+            const uDoc = await getDoc(doc(db, 'users', t.userId));
+            if (uDoc.exists()) {
+              setContestUsers(prev => ({ ...prev, [t.userId]: uDoc.data() }));
+            }
+          }
+        });
+      });
+      return () => unsubscribe();
+    }
+  }, [view, selectedMatch]);
 
   const fetchMatches = async () => {
     setLoading(true);
@@ -216,7 +239,7 @@ export default function App() {
     await setDoc(doc(db, 'contests', contestId), {
       matchId: selectedMatch.id,
       name: `${selectedMatch.team1} vs ${selectedMatch.team2} Friends Room`,
-      participants: [user.uid],
+      participants: arrayUnion(user.uid),
       maxParticipants: 20
     }, { merge: true });
 
@@ -646,28 +669,38 @@ export default function App() {
                     Friends_Room
                   </h4>
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 border-2 border-black bg-[#F27D26]/5">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-black text-white flex items-center justify-center font-black italic">YOU</div>
-                        <div>
-                          <span className="block font-bold uppercase text-sm">{user.displayName}</span>
-                          <span className="text-[10px] font-mono opacity-50">SQUAD_READY</span>
-                        </div>
-                      </div>
-                      <span className="font-mono font-black text-xl">0.0</span>
-                    </div>
-                    {[1, 2].map(i => (
-                      <div key={i} className="flex items-center justify-between p-4 border-2 border-black opacity-30 grayscale">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-black/10 flex items-center justify-center font-black italic">?</div>
-                          <div>
-                            <span className="block font-bold uppercase text-sm">Friend_{i}</span>
-                            <span className="text-[10px] font-mono opacity-50">WAITING...</span>
+                    {contestTeams.sort((a, b) => (b.totalPoints || 0) - (a.totalPoints || 0)).map((team, idx) => {
+                      const isMe = team.userId === user.uid;
+                      const participant = contestUsers[team.userId];
+                      return (
+                        <div key={team.id} className={cn(
+                          "flex items-center justify-between p-4 border-2 border-black",
+                          isMe ? "bg-[#F27D26]/5" : "bg-white"
+                        )}>
+                          <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "w-10 h-10 flex items-center justify-center font-black italic",
+                              isMe ? "bg-black text-white" : "bg-gray-100 text-black border-2 border-black"
+                            )}>
+                              {idx + 1}
+                            </div>
+                            <div>
+                              <span className="block font-bold uppercase text-sm">
+                                {participant?.displayName || (isMe ? user.displayName : 'Loading...')}
+                                {isMe && " (YOU)"}
+                              </span>
+                              <span className="text-[10px] font-mono opacity-50 uppercase">SQUAD_READY</span>
+                            </div>
                           </div>
+                          <span className="font-mono font-black text-xl">{team.totalPoints?.toFixed(1) || '0.0'}</span>
                         </div>
-                        <span className="font-mono font-black text-xl">0.0</span>
+                      );
+                    })}
+                    {contestTeams.length === 0 && (
+                      <div className="p-8 text-center font-mono opacity-30 italic uppercase border-2 border-dashed border-black/20">
+                        No_Teams_In_Room_Yet
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 
