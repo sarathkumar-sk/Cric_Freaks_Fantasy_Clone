@@ -4,39 +4,48 @@ import * as cheerio from "cheerio";
 import axios from "axios";
 import admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
-import firebaseConfig from "../firebase-applet-config.json";
+import fs from "fs";
+
+// Load Firebase config safely
+let firebaseConfig: any = {};
+try {
+  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(configPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+  } else {
+    console.warn("firebase-applet-config.json not found at", configPath);
+  }
+} catch (e) {
+  console.error("Failed to load firebase-applet-config.json:", e);
+}
 
 // Initialize Firebase Admin
 console.log("Initializing Firebase Admin...");
-let adminApp;
-try {
-  if (admin.apps.length === 0) {
-    console.log("Calling admin.initializeApp with Project ID:", firebaseConfig.projectId);
-    adminApp = admin.initializeApp({
+let adminApp: any = null;
+
+function getAdminApp() {
+  if (admin.apps.length > 0) return admin.apps[0];
+  
+  try {
+    console.log("Attempting admin.initializeApp with applicationDefault...");
+    return admin.initializeApp({
       projectId: firebaseConfig.projectId,
       credential: admin.credential.applicationDefault()
     });
-  } else {
-    adminApp = admin.app();
-  }
-} catch (e) {
-  console.error("Firebase Admin initialization failed with applicationDefault:", e);
-  try {
-    if (admin.apps.length === 0) {
-      console.log("Retrying admin.initializeApp without explicit credentials...");
-      adminApp = admin.initializeApp({
+  } catch (e) {
+    console.warn("Firebase Admin init with applicationDefault failed, retrying without credentials...");
+    try {
+      return admin.initializeApp({
         projectId: firebaseConfig.projectId
       });
-    } else {
-      adminApp = admin.app();
+    } catch (e2) {
+      console.error("Firebase Admin initialization failed completely:", e2);
+      return null;
     }
-  } catch (e2) {
-    console.error("Firebase Admin initialization failed completely:", e2);
-    // We don't want to crash the whole server if Firebase fails to init
-    // but we should log it clearly.
   }
 }
 
+adminApp = getAdminApp();
 const dbAdmin = adminApp ? getFirestore(adminApp, firebaseConfig.firestoreDatabaseId) : null;
 if (dbAdmin) {
   console.log("Connected to Firestore Database:", firebaseConfig.firestoreDatabaseId);
@@ -507,7 +516,7 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
   try {
     const actualEndpoint = endpoint === "live-cricket-scores" ? "live-scores" : endpoint;
     const URL = `${CRICBUZZ_URL}/cricket-match/${actualEndpoint}`;
-    const response = await axios.get(URL, { timeout: 2000 });
+    const response = await axios.get(URL, { timeout: 10000 });
     const $ = cheerio.load(response.data);
 
     const matches: any[] = [];
@@ -1412,9 +1421,11 @@ app.get("/api/matches", async (req, res) => {
             currentMatches[index] = updatedMatch;
             
             // Persist to Firestore
-            const docRef = matchesRef.doc(original.id);
-            batch.set(docRef, updatedMatch, { merge: true });
-            hasUpdates = true;
+            if (batch) {
+              const docRef = matchesRef.doc(original.id);
+              batch.set(docRef, updatedMatch, { merge: true });
+              hasUpdates = true;
+            }
           }
         }
       });
@@ -1437,9 +1448,12 @@ app.get("/api/matches", async (req, res) => {
       status: m.status || "upcoming"
     }));
     res.json(finalMatches);
-  } catch (error) {
+  } catch (error: any) {
     console.error("API Error:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.status(500).json({ 
+      error: "Internal Server Error", 
+      message: error?.message || String(error) 
+    });
   }
 });
 
