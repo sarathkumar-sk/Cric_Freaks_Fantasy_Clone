@@ -4,81 +4,19 @@ import { GoogleGenAI, Type } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function getIPLMatches(): Promise<Match[]> {
-  const CACHE_KEY = 'ipl_matches_cache_v2';
-  const CACHE_DURATION = 96 * 60 * 60 * 1000; // 96 hours (very long cache to minimize Gemini usage)
-
   try {
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) {
-      const { data, timestamp } = JSON.parse(cached);
-      if (Date.now() - timestamp < CACHE_DURATION) {
+    // Try backend API first to save Gemini quota
+    // The backend now handles scraping and fallbacks to mock data internally
+    const response = await fetch("/api/matches");
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.length > 0) {
         return data;
       }
-    }
-
-    // Try Gemini first for high-quality fixtures
-    try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: "Find and extract the latest IPL 2026 (Indian Premier League) match fixtures (upcoming, live, or completed) from Cricbuzz. Use https://www.cricbuzz.com/cricket-match/live-scores and search for the IPL 2026 series schedule page on Cricbuzz. Include team names, start time (ISO 8601 format), status, and current score/result if available.",
-        config: {
-          tools: [{ googleSearch: {} }, { urlContext: {} }],
-          toolConfig: { includeServerSideToolInvocations: true },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                id: { type: Type.STRING },
-                team1: { type: Type.STRING },
-                team2: { type: Type.STRING },
-                startTime: { type: Type.STRING, description: "ISO 8601 format" },
-                status: { 
-                  type: Type.STRING, 
-                  enum: ["upcoming", "live", "completed"] 
-                },
-                score: { type: Type.STRING },
-                result: { type: Type.STRING }
-              },
-              required: ["id", "team1", "team2", "startTime", "status"]
-            }
-          }
-        }
-      });
-
-      const matches = JSON.parse(response.text || "[]");
-      if (matches.length > 0) {
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ data: matches, timestamp: Date.now() }));
-        return matches;
-      }
-    } catch (geminiError) {
-      console.warn("Gemini fetch failed, falling back to API", geminiError);
-    }
-
-    // Fallback to backend API
-    const response = await fetch("/api/matches");
-    if (!response.ok) throw new Error("Failed to fetch matches from API");
-    const data = await response.json();
-    
-    if (data && data.length > 0) {
-      // Don't cache API fallback for 24h, maybe just 1h
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() - (23 * 60 * 60 * 1000) }));
-      return data;
-    }
-    
-    if (cached) {
-      const { data } = JSON.parse(cached);
-      return data;
     }
     return [];
   } catch (e) {
     console.error("Failed to fetch matches", e);
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) {
-      const { data } = JSON.parse(cached);
-      return data;
-    }
     return [];
   }
 }

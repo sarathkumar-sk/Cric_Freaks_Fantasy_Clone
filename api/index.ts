@@ -446,7 +446,7 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
   try {
     const actualEndpoint = endpoint === "live-cricket-scores" ? "live-scores" : endpoint;
     const URL = `${CRICBUZZ_URL}/cricket-match/${actualEndpoint}`;
-    const response = await axios.get(URL, { timeout: 5000 });
+    const response = await axios.get(URL, { timeout: 2000 });
     const $ = cheerio.load(response.data);
 
     const matches: any[] = [];
@@ -507,11 +507,750 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
 };
 
 // API Routes
+// ─────────────────────────────────────────────────────────────────────────────
+// IPL 2026 – COMPLETE LEAGUE SCHEDULE (70 matches)
+//
+// Time convention (IST → UTC):
+//   3:30 PM IST  =  10:00:00Z  (UTC+5:30, so 03:30 - 05:30 = -2h → 10:00Z)
+//   7:30 PM IST  =  14:00:00Z  (19:30 - 05:30 = 14:00Z)
+//
+// Results:
+//   Match 1–5  →  completed  (real scores as of 1 Apr 2026)
+//   Match 6+   →  status: "" (upcoming / to be played)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MOCK_MATCHES = [
+
+  // ── MATCH 1 ── 28 Mar  7:30 PM IST  Bengaluru ──────────────────────────────
+  {
+    id: "1",
+    team1: "RCB",
+    team2: "SRH",
+    venue: "M. Chinnaswamy Stadium, Bengaluru",
+    startTime: "2026-03-28T14:00:00Z",
+    status: "completed",
+    score: "201/9 (20.0) vs 203/4 (15.4)",
+    result: "Royal Challengers Bengaluru won by 6 wickets"
+  },
+
+  // ── MATCH 2 ── 29 Mar  7:30 PM IST  Mumbai ─────────────────────────────────
+  {
+    id: "2",
+    team1: "MI",
+    team2: "KKR",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-03-29T14:00:00Z",
+    status: "completed",
+    score: "220/4 (20.0) vs 224/4 (19.1)",
+    result: "Mumbai Indians won by 6 wickets"
+  },
+
+  // ── MATCH 3 ── 30 Mar  7:30 PM IST  Guwahati ──────────────────────────────
+  {
+    id: "3",
+    team1: "RR",
+    team2: "CSK",
+    venue: "Barsapara Cricket Stadium, Guwahati",
+    startTime: "2026-03-30T14:00:00Z",
+    status: "completed",
+    score: "127/10 (19.4) vs 128/2 (12.1)",
+    result: "Rajasthan Royals won by 8 wickets"
+  },
+
+  // ── MATCH 4 ── 31 Mar  7:30 PM IST  New Chandigarh ────────────────────────
+  {
+    id: "4",
+    team1: "PBKS",
+    team2: "GT",
+    venue: "Maharaja Yadavindra Singh International Cricket Stadium, New Chandigarh",
+    startTime: "2026-03-31T14:00:00Z",
+    status: "completed",
+    score: "162/6 (20.0) vs 165/7 (19.1)",
+    result: "Punjab Kings won by 3 wickets"
+  },
+
+  // ── MATCH 5 ── 1 Apr  7:30 PM IST  Lucknow ────────────────────────────────
+  {
+    id: "5",
+    team1: "LSG",
+    team2: "DC",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-04-01T14:00:00Z",
+    status: "completed",
+    score: "141/10 (20.0) vs 142/4 (16.3)",
+    result: "Delhi Capitals won by 6 wickets"
+  },
+
+  // ── MATCH 6 ── 2 Apr  7:30 PM IST  Kolkata ────────────────────────────────
+  {
+    id: "6",
+    team1: "KKR",
+    team2: "SRH",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-04-02T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 7 ── 3 Apr  7:30 PM IST  Chennai ────────────────────────────────
+  {
+    id: "7",
+    team1: "CSK",
+    team2: "PBKS",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-04-03T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 8 ── 4 Apr  3:30 PM IST  Delhi ────────────────────────────────── (double-header)
+  {
+    id: "8",
+    team1: "DC",
+    team2: "MI",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-04-04T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 9 ── 4 Apr  7:30 PM IST  Ahmedabad ─────────────────────────────  (double-header)
+  {
+    id: "9",
+    team1: "GT",
+    team2: "RR",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-04-04T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 10 ── 5 Apr  3:30 PM IST  Hyderabad ────────────────────────────  (double-header)
+  {
+    id: "10",
+    team1: "SRH",
+    team2: "LSG",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-04-05T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 11 ── 5 Apr  7:30 PM IST  Bengaluru ───────────────────────────── (double-header)
+  {
+    id: "11",
+    team1: "RCB",
+    team2: "CSK",
+    venue: "M. Chinnaswamy Stadium, Bengaluru",
+    startTime: "2026-04-05T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 12 ── 6 Apr  7:30 PM IST  Kolkata ──────────────────────────────
+  {
+    id: "12",
+    team1: "KKR",
+    team2: "PBKS",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-04-06T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 13 ── 7 Apr  7:30 PM IST  Guwahati ─────────────────────────────
+  {
+    id: "13",
+    team1: "RR",
+    team2: "MI",
+    venue: "Barsapara Cricket Stadium, Guwahati",
+    startTime: "2026-04-07T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 14 ── 8 Apr  7:30 PM IST  Delhi ────────────────────────────────
+  {
+    id: "14",
+    team1: "DC",
+    team2: "GT",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-04-08T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 15 ── 9 Apr  7:30 PM IST  Kolkata ──────────────────────────────
+  {
+    id: "15",
+    team1: "KKR",
+    team2: "LSG",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-04-09T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 16 ── 10 Apr  7:30 PM IST  Guwahati ────────────────────────────
+  {
+    id: "16",
+    team1: "RR",
+    team2: "RCB",
+    venue: "Barsapara Cricket Stadium, Guwahati",
+    startTime: "2026-04-10T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 17 ── 11 Apr  3:30 PM IST  New Chandigarh ──────────────────────  (double-header)
+  {
+    id: "17",
+    team1: "PBKS",
+    team2: "SRH",
+    venue: "Maharaja Yadavindra Singh International Cricket Stadium, New Chandigarh",
+    startTime: "2026-04-11T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 18 ── 11 Apr  7:30 PM IST  Chennai ─────────────────────────────  (double-header)
+  {
+    id: "18",
+    team1: "CSK",
+    team2: "DC",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-04-11T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 19 ── 12 Apr  3:30 PM IST  Lucknow ─────────────────────────────  (double-header)
+  {
+    id: "19",
+    team1: "LSG",
+    team2: "GT",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-04-12T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 20 ── 12 Apr  7:30 PM IST  Mumbai ───────────────────────────────  (double-header)
+  {
+    id: "20",
+    team1: "MI",
+    team2: "RCB",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-04-12T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 21 ── 13 Apr  7:30 PM IST  Hyderabad ───────────────────────────
+  {
+    id: "21",
+    team1: "SRH",
+    team2: "RR",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-04-13T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 22 ── 14 Apr  7:30 PM IST  Chennai ─────────────────────────────
+  {
+    id: "22",
+    team1: "CSK",
+    team2: "KKR",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-04-14T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 23 ── 15 Apr  7:30 PM IST  Bengaluru ───────────────────────────
+  {
+    id: "23",
+    team1: "RCB",
+    team2: "LSG",
+    venue: "M. Chinnaswamy Stadium, Bengaluru",
+    startTime: "2026-04-15T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 24 ── 16 Apr  7:30 PM IST  Mumbai ───────────────────────────────
+  {
+    id: "24",
+    team1: "MI",
+    team2: "PBKS",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-04-16T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 25 ── 17 Apr  7:30 PM IST  Ahmedabad ───────────────────────────
+  {
+    id: "25",
+    team1: "GT",
+    team2: "KKR",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-04-17T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 26 ── 18 Apr  3:30 PM IST  Bengaluru ───────────────────────────  (double-header)
+  {
+    id: "26",
+    team1: "RCB",
+    team2: "DC",
+    venue: "M. Chinnaswamy Stadium, Bengaluru",
+    startTime: "2026-04-18T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 27 ── 18 Apr  7:30 PM IST  Hyderabad ───────────────────────────  (double-header)
+  {
+    id: "27",
+    team1: "SRH",
+    team2: "CSK",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-04-18T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 28 ── 19 Apr  3:30 PM IST  Kolkata ─────────────────────────────  (double-header)
+  {
+    id: "28",
+    team1: "KKR",
+    team2: "RR",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-04-19T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 29 ── 19 Apr  7:30 PM IST  New Chandigarh ──────────────────────  (double-header)
+  {
+    id: "29",
+    team1: "PBKS",
+    team2: "LSG",
+    venue: "Maharaja Yadavindra Singh International Cricket Stadium, New Chandigarh",
+    startTime: "2026-04-19T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 30 ── 20 Apr  7:30 PM IST  Ahmedabad ───────────────────────────
+  {
+    id: "30",
+    team1: "GT",
+    team2: "MI",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-04-20T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 31 ── 21 Apr  7:30 PM IST  Hyderabad ───────────────────────────
+  {
+    id: "31",
+    team1: "SRH",
+    team2: "DC",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-04-21T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 32 ── 22 Apr  7:30 PM IST  Lucknow ─────────────────────────────
+  {
+    id: "32",
+    team1: "LSG",
+    team2: "RR",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-04-22T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 33 ── 23 Apr  7:30 PM IST  Mumbai ───────────────────────────────
+  {
+    id: "33",
+    team1: "MI",
+    team2: "CSK",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-04-23T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 34 ── 24 Apr  7:30 PM IST  Bengaluru ───────────────────────────
+  {
+    id: "34",
+    team1: "RCB",
+    team2: "GT",
+    venue: "M. Chinnaswamy Stadium, Bengaluru",
+    startTime: "2026-04-24T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 35 ── 25 Apr  3:30 PM IST  Delhi ────────────────────────────────  (double-header)
+  {
+    id: "35",
+    team1: "DC",
+    team2: "PBKS",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-04-25T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 36 ── 25 Apr  7:30 PM IST  Jaipur ──────────────────────────────  (double-header)
+  {
+    id: "36",
+    team1: "RR",
+    team2: "SRH",
+    venue: "Sawai Mansingh Stadium, Jaipur",
+    startTime: "2026-04-25T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 37 ── 26 Apr  3:30 PM IST  Ahmedabad ───────────────────────────  (double-header)
+  {
+    id: "37",
+    team1: "GT",
+    team2: "CSK",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-04-26T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 38 ── 26 Apr  7:30 PM IST  Lucknow ─────────────────────────────  (double-header)
+  {
+    id: "38",
+    team1: "LSG",
+    team2: "KKR",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-04-26T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 39 ── 27 Apr  7:30 PM IST  Delhi ────────────────────────────────
+  {
+    id: "39",
+    team1: "DC",
+    team2: "RCB",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-04-27T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 40 ── 28 Apr  7:30 PM IST  New Chandigarh ──────────────────────
+  {
+    id: "40",
+    team1: "PBKS",
+    team2: "RR",
+    venue: "Maharaja Yadavindra Singh International Cricket Stadium, New Chandigarh",
+    startTime: "2026-04-28T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 41 ── 29 Apr  7:30 PM IST  Mumbai ───────────────────────────────
+  {
+    id: "41",
+    team1: "MI",
+    team2: "SRH",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-04-29T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 42 ── 30 Apr  7:30 PM IST  Ahmedabad ───────────────────────────
+  {
+    id: "42",
+    team1: "GT",
+    team2: "RCB",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-04-30T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 43 ── 1 May  7:30 PM IST  Jaipur ───────────────────────────────
+  {
+    id: "43",
+    team1: "RR",
+    team2: "DC",
+    venue: "Sawai Mansingh Stadium, Jaipur",
+    startTime: "2026-05-01T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 44 ── 2 May  7:30 PM IST  Chennai ──────────────────────────────
+  {
+    id: "44",
+    team1: "CSK",
+    team2: "MI",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-05-02T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 45 ── 3 May  3:30 PM IST  Hyderabad ────────────────────────────  (double-header)
+  {
+    id: "45",
+    team1: "SRH",
+    team2: "KKR",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-05-03T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 46 ── 3 May  7:30 PM IST  Ahmedabad ────────────────────────────  (double-header)
+  {
+    id: "46",
+    team1: "GT",
+    team2: "PBKS",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-05-03T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 47 ── 4 May  7:30 PM IST  Mumbai ───────────────────────────────
+  {
+    id: "47",
+    team1: "MI",
+    team2: "LSG",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-05-04T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 48 ── 5 May  7:30 PM IST  Delhi ────────────────────────────────
+  {
+    id: "48",
+    team1: "DC",
+    team2: "CSK",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-05-05T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 49 ── 6 May  7:30 PM IST  Hyderabad ────────────────────────────
+  {
+    id: "49",
+    team1: "SRH",
+    team2: "PBKS",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-05-06T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 50 ── 7 May  7:30 PM IST  Lucknow ──────────────────────────────
+  {
+    id: "50",
+    team1: "LSG",
+    team2: "RCB",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-05-07T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 51 ── 8 May  7:30 PM IST  Delhi ────────────────────────────────
+  {
+    id: "51",
+    team1: "DC",
+    team2: "KKR",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-05-08T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 52 ── 9 May  7:30 PM IST  Jaipur ───────────────────────────────
+  {
+    id: "52",
+    team1: "RR",
+    team2: "GT",
+    venue: "Sawai Mansingh Stadium, Jaipur",
+    startTime: "2026-05-09T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 53 ── 10 May  3:30 PM IST  Chennai ──────────────────────────────  (double-header)
+  {
+    id: "53",
+    team1: "CSK",
+    team2: "LSG",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-05-10T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 54 ── 10 May  7:30 PM IST  Raipur ───────────────────────────────  (double-header)
+  {
+    id: "54",
+    team1: "RCB",
+    team2: "MI",
+    venue: "Shaheed Veer Narayan Singh International Stadium, Raipur",
+    startTime: "2026-05-10T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 55 ── 11 May  7:30 PM IST  Dharamsala ──────────────────────────
+  {
+    id: "55",
+    team1: "PBKS",
+    team2: "DC",
+    venue: "HPCA Stadium, Dharamsala",
+    startTime: "2026-05-11T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 56 ── 12 May  7:30 PM IST  Ahmedabad ───────────────────────────
+  {
+    id: "56",
+    team1: "GT",
+    team2: "SRH",
+    venue: "Narendra Modi Stadium, Ahmedabad",
+    startTime: "2026-05-12T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 57 ── 13 May  7:30 PM IST  Raipur ───────────────────────────────
+  {
+    id: "57",
+    team1: "RCB",
+    team2: "KKR",
+    venue: "Shaheed Veer Narayan Singh International Stadium, Raipur",
+    startTime: "2026-05-13T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 58 ── 14 May  7:30 PM IST  Dharamsala ──────────────────────────
+  {
+    id: "58",
+    team1: "PBKS",
+    team2: "MI",
+    venue: "HPCA Stadium, Dharamsala",
+    startTime: "2026-05-14T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 59 ── 15 May  7:30 PM IST  Lucknow ─────────────────────────────
+  {
+    id: "59",
+    team1: "LSG",
+    team2: "CSK",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-05-15T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 60 ── 16 May  7:30 PM IST  Kolkata ─────────────────────────────
+  {
+    id: "60",
+    team1: "KKR",
+    team2: "GT",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-05-16T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 61 ── 17 May  3:30 PM IST  Dharamsala ──────────────────────────  (double-header)
+  {
+    id: "61",
+    team1: "PBKS",
+    team2: "RCB",
+    venue: "HPCA Stadium, Dharamsala",
+    startTime: "2026-05-17T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 62 ── 17 May  7:30 PM IST  Delhi ────────────────────────────────  (double-header)
+  {
+    id: "62",
+    team1: "DC",
+    team2: "RR",
+    venue: "Arun Jaitley Stadium, Delhi",
+    startTime: "2026-05-17T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 63 ── 18 May  7:30 PM IST  Chennai ─────────────────────────────
+  {
+    id: "63",
+    team1: "CSK",
+    team2: "SRH",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-05-18T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 64 ── 19 May  7:30 PM IST  Jaipur ──────────────────────────────
+  {
+    id: "64",
+    team1: "RR",
+    team2: "LSG",
+    venue: "Sawai Mansingh Stadium, Jaipur",
+    startTime: "2026-05-19T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 65 ── 20 May  7:30 PM IST  Kolkata ─────────────────────────────
+  {
+    id: "65",
+    team1: "KKR",
+    team2: "MI",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-05-20T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 66 ── 21 May  7:30 PM IST  Chennai ─────────────────────────────
+  {
+    id: "66",
+    team1: "CSK",
+    team2: "GT",
+    venue: "MA Chidambaram Stadium, Chennai",
+    startTime: "2026-05-21T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 67 ── 22 May  7:30 PM IST  Hyderabad ───────────────────────────
+  {
+    id: "67",
+    team1: "SRH",
+    team2: "RCB",
+    venue: "Rajiv Gandhi International Stadium, Hyderabad",
+    startTime: "2026-05-22T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 68 ── 23 May  7:30 PM IST  Lucknow ─────────────────────────────
+  {
+    id: "68",
+    team1: "LSG",
+    team2: "PBKS",
+    venue: "BRSABV Ekana Cricket Stadium, Lucknow",
+    startTime: "2026-05-23T14:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 69 ── 24 May  3:30 PM IST  Mumbai ───────────────────────────────  (double-header)
+  {
+    id: "69",
+    team1: "MI",
+    team2: "RR",
+    venue: "Wankhede Stadium, Mumbai",
+    startTime: "2026-05-24T10:00:00Z",
+    status: ""
+  },
+
+  // ── MATCH 70 ── 24 May  7:30 PM IST  Kolkata ─────────────────────────────  (double-header)
+  {
+    id: "70",
+    team1: "KKR",
+    team2: "DC",
+    venue: "Eden Gardens, Kolkata",
+    startTime: "2026-05-24T14:00:00Z",
+    status: ""
+  },
+
+];
+
+let cachedMatches: any[] = [...MOCK_MATCHES];
+let lastFetchTime = Date.now();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
 app.get("/api/matches", async (req, res) => {
   try {
+    // Return cache if valid
+    if (cachedMatches.length > 0 && (Date.now() - lastFetchTime < CACHE_TTL)) {
+      const finalMatches = cachedMatches.map(m => ({
+        ...m,
+        status: m.status || "upcoming"
+      }));
+      return res.json(finalMatches);
+    }
+
     let matches: any[] = [];
     try {
-      // Try both international and league tabs
+      // Try both international and league tabs with shorter timeout
       const [intlMatches, leagueMatches] = await Promise.all([
         fetchMatches("live-scores", "international"),
         fetchMatches("live-scores", "league")
@@ -520,7 +1259,6 @@ app.get("/api/matches", async (req, res) => {
       const allScraped = [...intlMatches, ...leagueMatches];
       
       // Filter for matches that look like IPL or are in the League tab
-      // We also include some mock matches if no real IPL matches are found to ensure the app is usable
       matches = allScraped.map(m => {
         // Try to parse a real date if possible
         let startTime = new Date().toISOString();
@@ -546,37 +1284,41 @@ app.get("/api/matches", async (req, res) => {
         };
       });
 
-      // If no matches found, add some mock ones for IPL 2026 demo
-      if (matches.length === 0) {
-        matches = [
-          { 
-            id: "2421", 
-            team1: "CSK", 
-            team2: "RCB", 
-            startTime: "2026-03-22T14:30:00Z", 
-            status: "completed", 
-            score: "173/6 (20.0) vs 176/4 (18.4)",
-            result: "Chennai Super Kings won by 6 wickets"
-          },
-          { 
-            id: "2422", 
-            team1: "MI", 
-            team2: "GT", 
-            startTime: "2026-04-01T14:30:00Z", 
-            status: "live",
-            score: "168/6 (20.0) vs 120/4 (15.2)",
-            result: "Gujarat Titans need 49 runs in 28 balls"
-          },
-          { id: "2423", team1: "LSG", team2: "RR", startTime: "2026-04-02T10:00:00Z", status: "upcoming" },
-          { id: "2424", team1: "DC", team2: "PBKS", startTime: "2026-04-02T14:30:00Z", status: "upcoming" },
-          { id: "2425", team1: "KKR", team2: "SRH", startTime: "2026-04-03T14:30:00Z", status: "upcoming" }
-        ];
-      }
+      // Merge with mock matches to ensure we have the full schedule
+      // We prioritize scraped matches for live data
+      const mergedMatches = [...MOCK_MATCHES];
+      
+      matches.forEach(scraped => {
+        const index = mergedMatches.findIndex(m => 
+          (m.team1 === scraped.team1 && m.team2 === scraped.team2) ||
+          (scraped.team1.includes(m.team1) && scraped.team2.includes(m.team2))
+        );
+        
+        if (index !== -1) {
+          // Update mock match with live data
+          mergedMatches[index] = {
+            ...mergedMatches[index],
+            status: scraped.status,
+            score: scraped.score,
+            result: scraped.result,
+            // Keep the original ID if it's a mock match we recognize
+          };
+        }
+      });
+
+      cachedMatches = mergedMatches;
+      lastFetchTime = Date.now();
     } catch (e) {
       console.warn("Scraping failed:", e);
+      cachedMatches = MOCK_MATCHES;
+      lastFetchTime = Date.now();
     }
 
-    res.json(matches);
+    const finalMatches = cachedMatches.map(m => ({
+      ...m,
+      status: m.status || "upcoming"
+    }));
+    res.json(finalMatches);
   } catch (error) {
     res.status(500).json({ error: "Internal Server Error" });
   }
@@ -592,11 +1334,17 @@ app.get("/api/players/:matchId", async (req, res) => {
     }
 
     // Fallback to mock data for demo matches
+    const match = MOCK_MATCHES.find(m => m.id === matchId);
     let team1 = "LSG";
     let team2 = "DC";
 
-    if (matchId === "2422") { team1 = "RCB"; team2 = "MI"; }
-    if (matchId === "2423") { team1 = "CSK"; team2 = "GT"; }
+    if (match) {
+      team1 = match.team1;
+      team2 = match.team2;
+    } else {
+      if (matchId === "2422") { team1 = "RCB"; team2 = "MI"; }
+      if (matchId === "2423") { team1 = "CSK"; team2 = "GT"; }
+    }
 
     const p1 = TEAM_PLAYERS[team1] || TEAM_PLAYERS["LSG"];
     const p2 = TEAM_PLAYERS[team2] || TEAM_PLAYERS["DC"];
@@ -621,14 +1369,25 @@ app.get("/api/live/:matchId", async (req, res) => {
         currentBowler: `${scoreData.bowlerOne} ${scoreData.bowlerOneOver}-${scoreData.bowlerOneRun}-${scoreData.bowlerOneWickets}`
       });
     } catch (e) {
-      if (matchId === "2421") {
+      const match = MOCK_MATCHES.find(m => m.id === matchId);
+      if (match && match.status === "completed") {
         return res.json({
-          score: "141 (18.4) vs 145/4 (17.1)",
+          score: match.score || "0/0 (0.0)",
           status: "completed",
-          toss: "Delhi Capitals won the toss and chose to bowl",
-          result: "Delhi Capitals won by 6 wickets",
+          toss: match.result || "Match Ended",
+          result: match.result || "Match Ended",
           currentBatter: "Match Ended",
           currentBowler: "Match Ended"
+        });
+      }
+      if (match && match.status === "live") {
+        return res.json({
+          score: match.score || "0/0 (0.0)",
+          status: "live",
+          toss: match.result || "Match in Progress",
+          result: match.result || "Match in Progress",
+          currentBatter: "Playing",
+          currentBowler: "Bowling"
         });
       }
     }
@@ -645,20 +1404,27 @@ app.get("/api/live/:matchId", async (req, res) => {
   }
 });
 
-if (process.env.NODE_ENV !== "production") {
-  const { createServer: createViteServer } = await import("vite");
-  async function startDevServer() {
+async function startServer() {
+  if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-    
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-  startDevServer();
+  
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
 }
+
+startServer();
 
 export default app;
