@@ -2,6 +2,67 @@ import express from "express";
 import path from "path";
 import * as cheerio from "cheerio";
 import axios from "axios";
+import admin from "firebase-admin";
+import { getFirestore } from "firebase-admin/firestore";
+import firebaseConfig from "../firebase-applet-config.json";
+
+// Initialize Firebase Admin
+console.log("Initializing Firebase Admin...");
+let adminApp;
+try {
+  if (admin.apps.length === 0) {
+    console.log("Calling admin.initializeApp with Project ID:", firebaseConfig.projectId);
+    adminApp = admin.initializeApp({
+      projectId: firebaseConfig.projectId,
+      credential: admin.credential.applicationDefault()
+    });
+  } else {
+    adminApp = admin.app();
+  }
+} catch (e) {
+  console.error("Firebase Admin initialization failed with applicationDefault:", e);
+  try {
+    if (admin.apps.length === 0) {
+      console.log("Retrying admin.initializeApp without explicit credentials...");
+      adminApp = admin.initializeApp({
+        projectId: firebaseConfig.projectId
+      });
+    } else {
+      adminApp = admin.app();
+    }
+  } catch (e2) {
+    console.error("Firebase Admin initialization failed completely:", e2);
+    // We don't want to crash the whole server if Firebase fails to init
+    // but we should log it clearly.
+  }
+}
+
+const dbAdmin = adminApp ? getFirestore(adminApp, firebaseConfig.firestoreDatabaseId) : null;
+if (dbAdmin) {
+  console.log("Connected to Firestore Database:", firebaseConfig.firestoreDatabaseId);
+} else {
+  console.error("Firestore Database connection failed - dbAdmin is null");
+}
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    operationType,
+    path,
+    timestamp: new Date().toISOString()
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 const app = express();
 const PORT = 3000;
@@ -1233,13 +1294,56 @@ const MOCK_MATCHES = [
 
 ];
 
-let cachedMatches: any[] = [...MOCK_MATCHES];
-let lastFetchTime = Date.now();
+// Helper to sync mock matches to Firestore if they don't exist
+async function syncMatchesToFirestore() {
+  if (!dbAdmin) {
+    console.warn("Skipping syncMatchesToFirestore: Firestore not initialized.");
+    return;
+  }
+  console.log("Starting syncMatchesToFirestore...");
+  try {
+    const matchesRef = dbAdmin.collection("matches");
+    console.log("Fetching matches snapshot...");
+    const snapshot = await matchesRef.limit(1).get();
+    
+    if (snapshot.empty) {
+      console.log("Firestore 'matches' collection is empty. Initializing with MOCK_MATCHES...");
+      const batch = dbAdmin.batch();
+      let count = 0;
+      MOCK_MATCHES.forEach(match => {
+        const docRef = matchesRef.doc(match.id);
+        batch.set(docRef, {
+          ...match,
+          status: match.status || "upcoming"
+        });
+        count++;
+      });
+      await batch.commit();
+      console.log(`Firestore initialized successfully with ${count} matches.`);
+    } else {
+      console.log("Firestore 'matches' collection already has data. Skipping initialization.");
+    }
+  } catch (e) {
+    console.error("Error in syncMatchesToFirestore:");
+    handleFirestoreError(e, OperationType.WRITE, "matches");
+  }
+}
+
+// Run sync on startup
+syncMatchesToFirestore().catch(e => console.error("Initial sync failed:", e));
+
+let cachedMatches: any[] = [];
+let lastFetchTime = 0;
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
 app.get("/api/matches", async (req, res) => {
   try {
-    // Return cache if valid
+    if (!dbAdmin) {
+      console.warn("Firestore not initialized, falling back to MOCK_MATCHES");
+      return res.json(MOCK_MATCHES);
+    }
+    
+    // Return cache if valid (10 min TTL)
     if (cachedMatches.length > 0 && (Date.now() - lastFetchTime < CACHE_TTL)) {
       const finalMatches = cachedMatches.map(m => ({
         ...m,
@@ -1248,69 +1352,83 @@ app.get("/api/matches", async (req, res) => {
       return res.json(finalMatches);
     }
 
-    let matches: any[] = [];
+    // 1. Fetch from Firestore (Source of Truth)
+    let currentMatches: any[] = [];
+    const matchesRef = dbAdmin.collection("matches");
     try {
-      // Try both international and league tabs with shorter timeout
+      const snapshot = await matchesRef.orderBy("id").get();
+      currentMatches = snapshot.docs.map(doc => doc.data());
+    } catch (e) {
+      console.error("Firestore fetch failed, falling back to MOCK_MATCHES:", e);
+      currentMatches = [...MOCK_MATCHES];
+    }
+
+    if (currentMatches.length === 0) {
+      currentMatches = [...MOCK_MATCHES];
+    }
+
+    // 2. Try to scrape live data
+    try {
       const [intlMatches, leagueMatches] = await Promise.all([
         fetchMatches("live-scores", "international"),
         fetchMatches("live-scores", "league")
       ]);
       
-      const allScraped = [...intlMatches, ...leagueMatches];
+      const allScraped = [...intlMatches, ...leagueMatches].map(m => ({
+        team1: m.teams[0]?.team || "TBD",
+        team2: m.teams[1]?.team || "TBD",
+        status: m.status,
+        score: m.teams.map((t: any) => `${t.team} ${t.run}`).join(" vs "),
+        result: m.overview
+      }));
       
-      // Filter for matches that look like IPL or are in the League tab
-      matches = allScraped.map(m => {
-        // Try to parse a real date if possible
-        let startTime = new Date().toISOString();
-        if (m.timeAndPlace?.date) {
-          try {
-            // Cricbuzz date format: "Wed, Apr 01 2026"
-            const dateStr = `${m.timeAndPlace.date} ${m.timeAndPlace.time || '19:30'}`;
-            const parsedDate = new Date(dateStr);
-            if (!isNaN(parsedDate.getTime())) {
-              startTime = parsedDate.toISOString();
-            }
-          } catch (e) {}
-        }
+      // 3. Merge scraped data and PERSIST completed matches
+      const batch = dbAdmin ? dbAdmin.batch() : null;
+      let hasUpdates = false;
 
-        return {
-          id: m.id,
-          team1: m.teams[0]?.team || "TBD",
-          team2: m.teams[1]?.team || "TBD",
-          startTime,
-          status: m.status,
-          score: m.teams.map((t: any) => `${t.team} ${t.run}`).join(" vs "),
-          result: m.overview
-        };
-      });
+      if (!batch) {
+        console.warn("Cannot persist updates: Firestore not initialized.");
+      }
 
-      // Merge with mock matches to ensure we have the full schedule
-      // We prioritize scraped matches for live data
-      const mergedMatches = [...MOCK_MATCHES];
-      
-      matches.forEach(scraped => {
-        const index = mergedMatches.findIndex(m => 
+      allScraped.forEach(scraped => {
+        const index = currentMatches.findIndex(m => 
           (m.team1 === scraped.team1 && m.team2 === scraped.team2) ||
           (scraped.team1.includes(m.team1) && scraped.team2.includes(m.team2))
         );
         
         if (index !== -1) {
-          // Update mock match with live data
-          mergedMatches[index] = {
-            ...mergedMatches[index],
-            status: scraped.status,
-            score: scraped.score,
-            result: scraped.result,
-            // Keep the original ID if it's a mock match we recognize
-          };
+          const original = currentMatches[index];
+          const newStatus = scraped.status || "upcoming";
+          
+          // Only update if status changed or it's live/completed
+          if (newStatus !== original.status || scraped.score !== original.score) {
+            const updatedMatch = {
+              ...original,
+              status: newStatus,
+              score: scraped.score || original.score,
+              result: scraped.result || original.result
+            };
+            
+            currentMatches[index] = updatedMatch;
+            
+            // Persist to Firestore
+            const docRef = matchesRef.doc(original.id);
+            batch.set(docRef, updatedMatch, { merge: true });
+            hasUpdates = true;
+          }
         }
       });
 
-      cachedMatches = mergedMatches;
+      if (hasUpdates && batch) {
+        await batch.commit();
+        console.log("Firestore updated with live match data.");
+      }
+
+      cachedMatches = currentMatches;
       lastFetchTime = Date.now();
     } catch (e) {
-      console.warn("Scraping failed:", e);
-      cachedMatches = MOCK_MATCHES;
+      console.warn("Scraping failed, using Firestore data:", e);
+      cachedMatches = currentMatches;
       lastFetchTime = Date.now();
     }
 
@@ -1320,6 +1438,7 @@ app.get("/api/matches", async (req, res) => {
     }));
     res.json(finalMatches);
   } catch (error) {
+    console.error("API Error:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -1405,15 +1524,19 @@ app.get("/api/live/:matchId", async (req, res) => {
 });
 
 async function startServer() {
+  console.log("Starting server in", process.env.NODE_ENV || "development", "mode...");
   if (process.env.NODE_ENV !== "production") {
+    console.log("Initializing Vite middleware...");
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
+    console.log("Vite middleware initialized.");
   } else {
     const distPath = path.join(process.cwd(), 'dist');
+    console.log("Serving static files from:", distPath);
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

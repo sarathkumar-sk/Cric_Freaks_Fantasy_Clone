@@ -11,6 +11,11 @@ service cloud.firestore {
     function isDocOwner() {
       return isAuthenticated() && request.auth.uid == resource.data.userId;
     }
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "sarath13092003@gmail.com" && request.auth.token.email_verified == true));
+    }
 
     // Test connection
     match /test/{docId} {
@@ -20,21 +25,21 @@ service cloud.firestore {
     // User profiles
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow write: if isOwner(userId);
+      allow write: if isOwner(userId) || isAdmin();
     }
 
     // Matches (Read-only for users, write for admin/system)
     match /matches/{matchId} {
       allow read: if isAuthenticated();
-      allow write: if false; // Only system updates
+      allow write: if isAdmin(); 
     }
 
     // User teams
     match /teams/{teamId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isDocOwner();
-      allow delete: if isDocOwner();
+      allow update: if isDocOwner() || isAdmin();
+      allow delete: if isDocOwner() || isAdmin();
     }
 
     // Contests/Rooms
