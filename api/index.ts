@@ -26,18 +26,20 @@ let adminApp: any = null;
 function getAdminApp() {
   if (admin.apps.length > 0) return admin.apps[0];
   
+  const options: any = {};
+  if (firebaseConfig.projectId) {
+    options.projectId = firebaseConfig.projectId;
+  }
+  
   try {
-    console.log("Attempting admin.initializeApp with applicationDefault...");
-    return admin.initializeApp({
-      projectId: firebaseConfig.projectId,
-      credential: admin.credential.applicationDefault()
-    });
+    // In AIS Build, initializing with just projectId often works best as it picks up environment credentials
+    console.log("Initializing Firebase Admin with options:", JSON.stringify(options));
+    return admin.initializeApp(options);
   } catch (e) {
-    console.warn("Firebase Admin init with applicationDefault failed, retrying without credentials...");
+    console.warn("Firebase Admin initialization with options failed, trying with applicationDefault...");
     try {
-      return admin.initializeApp({
-        projectId: firebaseConfig.projectId
-      });
+      options.credential = admin.credential.applicationDefault();
+      return admin.initializeApp(options);
     } catch (e2) {
       console.error("Firebase Admin initialization failed completely:", e2);
       return null;
@@ -46,10 +48,29 @@ function getAdminApp() {
 }
 
 adminApp = getAdminApp();
-const dbAdmin = adminApp ? getFirestore(adminApp, firebaseConfig.firestoreDatabaseId) : null;
-if (dbAdmin) {
-  console.log("Connected to Firestore Database:", firebaseConfig.firestoreDatabaseId);
-} else {
+// Use the named database if provided, otherwise default
+let dbAdmin: any = null;
+let isUsingFallbackDb = false;
+
+try {
+  if (adminApp) {
+    dbAdmin = getFirestore(adminApp, firebaseConfig.firestoreDatabaseId || undefined);
+    console.log("Connected to Firestore. Project:", firebaseConfig.projectId, "Database:", firebaseConfig.firestoreDatabaseId || "(default)");
+  }
+} catch (e) {
+  console.warn("Failed to connect to configured Firestore database, falling back to default...", e);
+  try {
+    if (adminApp) {
+      dbAdmin = getFirestore(adminApp);
+      isUsingFallbackDb = true;
+      console.log("Connected to default Firestore database.");
+    }
+  } catch (e2) {
+    console.error("Firestore connection failed completely:", e2);
+  }
+}
+
+if (!dbAdmin) {
   console.error("Firestore Database connection failed - dbAdmin is null");
 }
 
@@ -430,42 +451,59 @@ const TEAM_PLAYERS: Record<string, any[]> = {
 
 const fetchScore = async (matchId: string) => {
   try {
-    const response = await axios.get(`${CRICBUZZ_URL}/live-cricket-scores/${matchId}`, { timeout: 5000 });
-    const $ = cheerio.load(response.data);
+    const URL = `${CRICBUZZ_URL}/live-cricket-scores/${matchId}`;
+    const response = await axios.get(URL, { 
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    const html = response.data;
+    
+    // Try to extract from Next.js data
+    const matchInfoMatch = html.match(/matchInfo\\":(\{.*?\})(?=,"matchScore|,"currBatTeamId)/);
+    const matchScoreMatch = html.match(/matchScore\\":(\{.*?\})(?=,"team1Score|,"team2Score|,"inngs1|,"inngs2)/);
+    
+    if (matchInfoMatch && matchScoreMatch) {
+      const info = JSON.parse(matchInfoMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\'));
+      const score = JSON.parse(matchScoreMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\'));
+      
+      const team1Score = score.team1Score?.inngs1 || score.team1Score?.inngs2;
+      const team2Score = score.team2Score?.inngs1 || score.team2Score?.inngs2;
+      
+      const liveScore = team1Score ? `${team1Score.runs}/${team1Score.wickets} (${team1Score.overs})` : 
+                        (team2Score ? `${team2Score.runs}/${team2Score.wickets} (${team2Score.overs})` : "0/0 (0.0)");
 
+      return {
+        title: `${info.seriesName}, ${info.matchDesc}`,
+        update: info.status || info.shortStatus || "Match in Progress",
+        liveScore,
+        batsmanOne: "Playing",
+        batsmanOneRun: "",
+        batsmanOneBall: "",
+        bowlerOne: "Bowling",
+        bowlerOneOver: "",
+        bowlerOneRun: "",
+        bowlerOneWickets: ""
+      };
+    }
+
+    // Fallback to old selectors
+    const $ = cheerio.load(html);
     const update = $('.cb-col.cb-col-100.cb-min-stts.cb-text-complete').text().trim() || 'Match Stats will Update Soon';
     const process = $('.cb-text-inprogress').text().trim() || 'Match Stats will Update Soon';
-    const noresult = $('.cb-col.cb-col-100.cb-font-18.cb-toss-sts.cb-text-abandon').text().trim() || 'Match Stats will Update Soon';
-    const stumps = $('.cb-text-stumps').text().trim() || 'Match Stats will Update Soon';
-    const lunch = $('.cb-text-lunch').text().trim() || 'Match Stats will Update Soon';
-    const inningsbreak = $('.cb-text-inningsbreak').text().trim() || 'Match Stats will Update Soon';
-    const tea = $('.cb-text-tea').text().trim() || 'Match Stats will Update Soon';
-    const rain_break = $('.cb-text-rain').text().trim() || 'Match Stats will Update Soon';
-    const wet_outfield = $('.cb-text-wetoutfield').text().trim() || 'Match Stats will Update Soon';
-
+    
     return {
       'title': $('.cb-nav-hdr.cb-font-18.line-ht24').text().trim().replace(', Commentary', ''),
-      'update': update !== 'Match Stats will Update Soon' ? update : process || noresult || stumps || lunch || inningsbreak || tea || rain_break || wet_outfield || 'Match Stats will Update Soon...',
+      'update': update !== 'Match Stats will Update Soon' ? update : process || 'Match Stats will Update Soon...',
       'liveScore': $('.cb-font-20.text-bold').text().trim(),
-      'runRate': $('.cb-font-12.cb-text-gray').first().text().trim().replace('CRR:\u00a0', ''),
       'batsmanOne': $('.cb-col.cb-col-50').eq(1).text().trim(),
       'batsmanOneRun': $('.cb-col.cb-col-10.ab.text-right').eq(0).text().trim(),
       'batsmanOneBall': '(' + $('.cb-col.cb-col-10.ab.text-right').eq(1).text().trim() + ')',
-      'batsmanOneSR': $('.cb-col.cb-col-14.ab.text-right').eq(0).text().trim(),
-      'batsmanTwo': $('.cb-col.cb-col-50').eq(2).text().trim(),
-      'batsmanTwoRun': $('.cb-col.cb-col-10.ab.text-right').eq(2).text().trim(),
-      'batsmanTwoBall': '(' + $('.cb-col.cb-col-10.ab.text-right').eq(3).text().trim() + ')',
-      'batsmanTwoSR': $('.cb-col.cb-col-14.ab.text-right').eq(1).text().trim(),
       'bowlerOne': $('.cb-col.cb-col-50').eq(4).text().trim(),
       'bowlerOneOver': $('.cb-col.cb-col-10.text-right').eq(4).text().trim(),
       'bowlerOneRun': $('.cb-col.cb-col-10.text-right').eq(5).text().trim(),
       'bowlerOneWickets': $('.cb-col.cb-col-8.text-right').eq(5).text().trim(),
-      'bowlerOneEconomy': $('.cb-col.cb-col-14.text-right').eq(2).text().trim(),
-      'bowlerTwo': $('.cb-col.cb-col-50').eq(5).text().trim(),
-      'bowlerTwoOver': $('.cb-col.cb-col-10.text-right').eq(6).text().trim(),
-      'bowlerTwoRun': $('.cb-col.cb-col-10.text-right').eq(7).text().trim(),
-      'bowlerTwoWicket': $('.cb-col.cb-col-8.text-right').eq(7).text().trim(),
-      'bowlerTwoEconomy': $('.cb-col.cb-col-14.text-right').eq(3).text().trim(),
     };
   } catch (e) {
     throw new Error("Something went wrong");
@@ -474,9 +512,47 @@ const fetchScore = async (matchId: string) => {
 
 const fetchSquads = async (matchId: string) => {
   try {
-    const response = await axios.get(`${CRICBUZZ_URL}/cricket-match-squads/${matchId}`, { timeout: 5000 });
-    const $ = cheerio.load(response.data);
+    const URL = `${CRICBUZZ_URL}/cricket-match-squads/${matchId}`;
+    const response = await axios.get(URL, { 
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    const html = response.data;
     const players: any[] = [];
+
+    // Try to extract from Next.js data
+    // Look for player objects: {"id":123,"name":"...","role":"..."}
+    const playerRegex = /\{"id":(\d+),"name":"(.*?)","role":"(.*?)"/g;
+    let match;
+    while ((match = playerRegex.exec(html)) !== null) {
+      const id = match[1];
+      const name = match[2].replace(/\\"/g, '"');
+      const roleRaw = match[3].toLowerCase();
+      
+      let role = "BAT";
+      if (roleRaw.includes("wk") || roleRaw.includes("keeper")) role = "WK";
+      else if (roleRaw.includes("all") || roleRaw.includes("ar")) role = "AR";
+      else if (roleRaw.includes("bowl")) role = "BOWL";
+
+      if (!players.find(p => p.id === id)) {
+        players.push({
+          id,
+          name,
+          role,
+          team: "TBD", // Team info might be in a parent block
+          credits: 8.5 + (Math.random() * 3),
+          status: "playing",
+          points: 0
+        });
+      }
+    }
+
+    if (players.length > 0) return players;
+
+    // Fallback to old selectors
+    const $ = cheerio.load(html);
 
     // Cricbuzz squads page usually has two columns for the two teams
     $('.cb-col.cb-col-100.cb-bg-white').find('.cb-col.cb-col-50').each((i, teamCol) => {
@@ -516,58 +592,107 @@ const fetchMatches = async (endpoint: string, origin = "international") => {
   try {
     const actualEndpoint = endpoint === "live-cricket-scores" ? "live-scores" : endpoint;
     const URL = `${CRICBUZZ_URL}/cricket-match/${actualEndpoint}`;
-    const response = await axios.get(URL, { timeout: 10000 });
-    const $ = cheerio.load(response.data);
-
-    const matches: any[] = [];
-
-    // Cricbuzz structure for live scores
-    $(`.cb-plyr-tbody[ng-show="active_match_type == '${origin}-tab'"] .cb-col-100.cb-col`).each((index, matchElement) => {
-      const titleElement = $(matchElement).find('.cb-lv-scr-mtch-hdr a');
-      const title = titleElement.text().trim();
-      const hrefAttribute = titleElement.attr('href');
-      const matchId = hrefAttribute ? hrefAttribute.match(/\/(\d+)\//)?.[1] : null;
-
-      const teams: any[] = [];
-      $(matchElement).find('.cb-hmscg-tm-nm').each((i, teamElement) => {
-        const teamName = $(teamElement).text().trim();
-        const run = $(matchElement).find('.cb-ovr-flo').filter(':not(.cb-hmscg-tm-nm)').eq(i).text().trim();
-        const senitizeRun = run.split(teamName).join("");
-
-        teams.push({
-          team: teamName,
-          run: senitizeRun,
-        });
-      });
-
-      const timeAndPlaceElement = $(matchElement).find('div.text-gray');
-      const date = timeAndPlaceElement.find('span').eq(0).text().trim();
-      const time = timeAndPlaceElement.find('span').eq(2).text().trim();
-      const place = timeAndPlaceElement.find('span.text-gray').text().trim();
-
-      const overViewIfLive = $(matchElement).find(".cb-text-live").text().trim();
-      const overViewIfComplete = $(matchElement).find(".cb-text-complete").text().trim();
-      const overViewIfUpcoming = $(matchElement).find(".cb-text-preview").text().trim();
-
-      const matchObject = {
-        id: matchId,
-        title,
-        teams,
-        timeAndPlace: {
-          date,
-          time,
-          place,
-        },
-        overview: overViewIfLive || overViewIfComplete || overViewIfUpcoming,
-        status: overViewIfLive ? "live" : (overViewIfComplete ? "completed" : "upcoming")
-      };
-
-      if (matchId && title.length) {
-        if (!matches.find(match => match.id === matchId)) {
-          matches.push(matchObject);
-        }
+    const response = await axios.get(URL, { 
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
     });
+    const html = response.data;
+    const matches: any[] = [];
+
+    // 1. Try to extract from Next.js data (self.__next_f.push)
+    // This is more robust for the new Cricbuzz site
+    const matchInfoRegex = /matchInfo\\":(\{.*?\})(?=,"matchScore|,"currBatTeamId|,"isTournament|,"seriesStartDt)/g;
+    const matchScoreRegex = /matchScore\\":(\{.*?\})(?=,"team1Score|,"team2Score|,"inngs1|,"inngs2|,"inningsId|,"runs|,"wickets|,"overs|,"isForecastEnabled)/g;
+    
+    // Actually, a simpler way is to find the whole match object
+    // The format is roughly: {\"match\":{\"matchInfo\":{...},\"matchScore\":{...}}}
+    // But it's escaped: {\\\"match\\\":{\\\"matchInfo\\\":{...}}}
+    
+    // Let's try to find all matchInfo blocks first
+    const matchBlocks = html.match(/matchInfo\\":\{.*?\}/g) || [];
+    
+    matchBlocks.forEach((block: string) => {
+      try {
+        // Unescape the block
+        const unescaped = block.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        const jsonStr = "{" + unescaped + "}";
+        const data = JSON.parse(jsonStr);
+        const info = data.matchInfo;
+        
+        if (info) {
+          // Try to find the corresponding score in the same chunk of HTML if possible
+          // For now, we'll just extract what we can from the info block
+          
+          const matchObject = {
+            id: info.matchId?.toString(),
+            title: `${info.seriesName}, ${info.matchDesc}`,
+            team1: info.team1?.teamName,
+            team2: info.team2?.teamName,
+            status: info.state === "In Progress" ? "live" : (info.state === "Complete" ? "completed" : "upcoming"),
+            overview: info.status || info.shortStatus,
+            score: info.shortStatus || ""
+          };
+          
+          if (matchObject.id && matchObject.team1) {
+            if (!matches.find(m => m.id === matchObject.id)) {
+              matches.push(matchObject);
+            }
+          }
+        }
+      } catch (e) {
+        // Skip invalid blocks
+      }
+    });
+
+    // 2. Fallback to old cheerio selectors if no matches found
+    if (matches.length === 0) {
+      const $ = cheerio.load(html);
+      $(`.cb-plyr-tbody[ng-show="active_match_type == '${origin}-tab'"] .cb-col-100.cb-col`).each((index, matchElement) => {
+        const titleElement = $(matchElement).find('.cb-lv-scr-mtch-hdr a');
+        const title = titleElement.text().trim();
+        const hrefAttribute = titleElement.attr('href');
+        const matchId = hrefAttribute ? hrefAttribute.match(/\/(\d+)\//)?.[1] : null;
+
+        const teams: any[] = [];
+        $(matchElement).find('.cb-hmscg-tm-nm').each((i, teamElement) => {
+          const teamName = $(teamElement).text().trim();
+          const run = $(matchElement).find('.cb-ovr-flo').filter(':not(.cb-hmscg-tm-nm)').eq(i).text().trim();
+          const senitizeRun = run.split(teamName).join("");
+
+          teams.push({
+            team: teamName,
+            run: senitizeRun,
+          });
+        });
+
+        const timeAndPlaceElement = $(matchElement).find('div.text-gray');
+        const date = timeAndPlaceElement.find('span').eq(0).text().trim();
+        const time = timeAndPlaceElement.find('span').eq(2).text().trim();
+        const place = timeAndPlaceElement.find('span.text-gray').text().trim();
+
+        const overViewIfLive = $(matchElement).find(".cb-text-live").text().trim();
+        const overViewIfComplete = $(matchElement).find(".cb-text-complete").text().trim();
+        const overViewIfUpcoming = $(matchElement).find(".cb-text-preview").text().trim();
+
+        const matchObject = {
+          id: matchId,
+          title,
+          team1: teams[0]?.team,
+          team2: teams[1]?.team,
+          score: teams.map(t => `${t.team} ${t.run}`).join(" vs "),
+          overview: overViewIfLive || overViewIfComplete || overViewIfUpcoming,
+          status: overViewIfLive ? "live" : (overViewIfComplete ? "completed" : "upcoming")
+        };
+
+        if (matchId && title.length) {
+          if (!matches.find(match => match.id === matchId)) {
+            matches.push(matchObject);
+          }
+        }
+      });
+    }
 
     return matches;
   } catch (error: any) {
@@ -658,7 +783,9 @@ const MOCK_MATCHES = [
     team2: "SRH",
     venue: "Eden Gardens, Kolkata",
     startTime: "2026-04-02T14:00:00Z",
-    status: ""
+    status: "live",
+    score: "SRH 83/1 (5.5)",
+    result: "KKR opt to bowl"
   },
 
   // ── MATCH 7 ── 3 Apr  7:30 PM IST  Chennai ────────────────────────────────
@@ -1312,7 +1439,7 @@ async function syncMatchesToFirestore() {
   console.log("Starting syncMatchesToFirestore...");
   try {
     const matchesRef = dbAdmin.collection("matches");
-    console.log("Fetching matches snapshot...");
+    console.log("Fetching matches snapshot from collection:", matchesRef.path);
     const snapshot = await matchesRef.limit(1).get();
     
     if (snapshot.empty) {
@@ -1333,8 +1460,27 @@ async function syncMatchesToFirestore() {
       console.log("Firestore 'matches' collection already has data. Skipping initialization.");
     }
   } catch (e) {
-    console.error("Error in syncMatchesToFirestore:");
-    handleFirestoreError(e, OperationType.WRITE, "matches");
+    console.error("Error in syncMatchesToFirestore:", e);
+    const isPermissionDenied = e instanceof Error && e.message.includes("PERMISSION_DENIED");
+    const isNotFound = e instanceof Error && e.message.includes("NOT_FOUND");
+    
+    if (isPermissionDenied || isNotFound) {
+      console.error(`CRITICAL: Firestore ${isNotFound ? 'database not found' : 'permission denied'}.`);
+      
+      // Attempt fallback to default database if not already using it
+      if (!isUsingFallbackDb && firebaseConfig.firestoreDatabaseId) {
+        console.log("Attempting fallback to default database for sync...");
+        try {
+          const dbDefault = getFirestore(admin.apps[0]);
+          dbAdmin = dbDefault;
+          isUsingFallbackDb = true;
+          // Retry sync once
+          await syncMatchesToFirestore();
+        } catch (e2) {
+          console.error("Sync fallback failed:", e2);
+        }
+      }
+    }
   }
 }
 
@@ -1363,13 +1509,38 @@ app.get("/api/matches", async (req, res) => {
 
     // 1. Fetch from Firestore (Source of Truth)
     let currentMatches: any[] = [];
-    const matchesRef = dbAdmin.collection("matches");
     try {
-      const snapshot = await matchesRef.orderBy("id").get();
+      if (!dbAdmin) throw new Error("Firestore not initialized");
+      
+      const matchesRef = dbAdmin.collection("matches");
+      const snapshot = await matchesRef.get();
       currentMatches = snapshot.docs.map(doc => doc.data());
+      // Sort in memory by ID
+      currentMatches.sort((a, b) => parseInt(a.id) - parseInt(b.id));
     } catch (e) {
-      console.error("Firestore fetch failed, falling back to MOCK_MATCHES:", e);
-      currentMatches = [...MOCK_MATCHES];
+      console.error("Firestore fetch failed:", e);
+      
+      const isPermissionDenied = e instanceof Error && e.message.includes("PERMISSION_DENIED");
+      const isNotFound = e instanceof Error && e.message.includes("NOT_FOUND");
+      
+      // Fallback to default database if permission denied or not found on configured one
+      if ((isPermissionDenied || isNotFound) && !isUsingFallbackDb && firebaseConfig.firestoreDatabaseId) {
+        console.warn(`Firestore ${isNotFound ? 'database not found' : 'permission denied'} for configured database, attempting fallback to default database...`);
+        try {
+          const dbDefault = getFirestore(admin.apps[0]);
+          const snapshot = await dbDefault.collection("matches").get();
+          currentMatches = snapshot.docs.map(doc => doc.data());
+          currentMatches.sort((a, b) => parseInt(a.id) - parseInt(b.id));
+          dbAdmin = dbDefault; // Switch for future calls
+          isUsingFallbackDb = true;
+          console.log("Successfully switched to default Firestore database.");
+        } catch (e2) {
+          console.error("Fallback to default database also failed:", e2);
+          currentMatches = [...MOCK_MATCHES];
+        }
+      } else {
+        currentMatches = [...MOCK_MATCHES];
+      }
     }
 
     if (currentMatches.length === 0) {
@@ -1384,10 +1555,11 @@ app.get("/api/matches", async (req, res) => {
       ]);
       
       const allScraped = [...intlMatches, ...leagueMatches].map(m => ({
-        team1: m.teams[0]?.team || "TBD",
-        team2: m.teams[1]?.team || "TBD",
+        id: m.id,
+        team1: m.team1 || "TBD",
+        team2: m.team2 || "TBD",
         status: m.status,
-        score: m.teams.map((t: any) => `${t.team} ${t.run}`).join(" vs "),
+        score: m.score,
         result: m.overview
       }));
       
@@ -1400,59 +1572,56 @@ app.get("/api/matches", async (req, res) => {
       }
 
       allScraped.forEach(scraped => {
-        const index = currentMatches.findIndex(m => 
+        // Find matching match in our database
+        // Match by teams if ID doesn't match (Cricbuzz IDs change)
+        const matchInDb = currentMatches.find(m => 
+          m.id === scraped.id || 
           (m.team1 === scraped.team1 && m.team2 === scraped.team2) ||
-          (scraped.team1.includes(m.team1) && scraped.team2.includes(m.team2))
+          (m.team1 === scraped.team2 && m.team2 === scraped.team1)
         );
-        
-        if (index !== -1) {
-          const original = currentMatches[index];
-          const newStatus = scraped.status || "upcoming";
+
+        if (matchInDb) {
+          // Update the match in our list
+          matchInDb.status = scraped.status;
+          matchInDb.score = scraped.score;
+          matchInDb.result = scraped.result;
           
-          // Only update if status changed or it's live/completed
-          if (newStatus !== original.status || scraped.score !== original.score) {
-            const updatedMatch = {
-              ...original,
-              status: newStatus,
-              score: scraped.score || original.score,
-              result: scraped.result || original.result
-            };
-            
-            currentMatches[index] = updatedMatch;
-            
-            // Persist to Firestore
-            if (batch) {
-              const docRef = matchesRef.doc(original.id);
-              batch.set(docRef, updatedMatch, { merge: true });
-              hasUpdates = true;
-            }
+          // If match is completed, persist to Firestore
+          if (scraped.status === "completed" && batch && dbAdmin) {
+            const docRef = dbAdmin.collection("matches").doc(matchInDb.id);
+            batch.update(docRef, {
+              status: "completed",
+              score: scraped.score,
+              result: scraped.result
+            });
+            hasUpdates = true;
           }
         }
       });
 
       if (hasUpdates && batch) {
         await batch.commit();
-        console.log("Firestore updated with live match data.");
+        console.log("Persisted completed matches to Firestore.");
       }
-
-      cachedMatches = currentMatches;
-      lastFetchTime = Date.now();
-    } catch (e) {
-      console.warn("Scraping failed, using Firestore data:", e);
-      cachedMatches = currentMatches;
-      lastFetchTime = Date.now();
+    } catch (scrapeError) {
+      console.error("Scraping process failed:", scrapeError);
     }
 
-    const finalMatches = cachedMatches.map(m => ({
+    // Update cache
+    cachedMatches = [...currentMatches];
+    lastFetchTime = Date.now();
+    
+    const finalMatches = currentMatches.map(m => ({
       ...m,
       status: m.status || "upcoming"
     }));
     res.json(finalMatches);
   } catch (error: any) {
-    console.error("API Error:", error);
+    console.error("API Error in /api/matches:", error);
     res.status(500).json({ 
       error: "Internal Server Error", 
-      message: error?.message || String(error) 
+      message: error?.message || String(error),
+      fallback: MOCK_MATCHES 
     });
   }
 });

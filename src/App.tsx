@@ -399,9 +399,18 @@ export default function App() {
                               match.status === 'live' ? "bg-[#F27D26] text-white border-[#F27D26]" : "border-black opacity-50"
                             )}>
                               {match.status === 'live' && <div className="absolute inset-0 bg-white/20 animate-[pulse_1s_infinite]"></div>}
-                              <span className="relative z-10">{match.status}</span>
+                              <span className="relative z-10">{match.status || 'Upcoming'}</span>
                             </div>
-                            {match.toss && <span className="text-[8px] font-mono opacity-50 uppercase truncate max-w-[100px]">{match.toss}</span>}
+                            {match.score && (
+                              <div className="text-[10px] font-mono font-bold text-[#F27D26] mt-1 text-right">
+                                {match.score}
+                              </div>
+                            )}
+                            {match.result && (
+                              <div className="text-[9px] font-mono opacity-50 italic mt-0.5 max-w-[120px] text-right">
+                                {match.result}
+                              </div>
+                            )}
                           </div>
                           <ChevronRight className="hidden sm:block w-6 h-6 opacity-20 group-hover:opacity-100 group-hover:translate-x-1 transition-all" />
                         </div>
